@@ -90,10 +90,10 @@ test('no-TUN notice describes reachability, not isolation', async () => {
 	assert.doesNotMatch(notice, /没有虚拟 IP/, 'the node does have a virtual IP');
 });
 
-// Without CAP_NET_RAW the core cannot bind its sockets to an interface, and the
-// fix lives on the Console. The interface may only claim that was done when it
-// actually was: writing the setting needs a Console session.
-test('unsynced bind capability asks for a Console login, not a shell', async () => {
+// Losing CAP_NET_RAW makes the node unreachable until the Console is told. The
+// interface may only claim that was done when it actually was: writing the
+// setting needs a Console session.
+test('unsynced bind capability asks for a Console login', async () => {
 	const root = await renderWith({
 		'api/status': {
 			...connected, core_installed: true, cli_installed: true,
@@ -101,13 +101,30 @@ test('unsynced bind capability asks for a Console login, not a shell', async () 
 		},
 	});
 	const notice = texts(root).join('\n');
-	assert.match(notice, /CAP_NET_RAW/, 'the cause must be named');
-	assert.match(notice, /无法连接任何 peer/, 'the symptom must be named');
+	assert.match(notice, /无法连接网络中的其它设备/, 'the symptom must be named');
 	assert.match(notice, /登录 EasyTier Console/, 'the required action must be named');
-	assert.doesNotMatch(notice, /无需任何手工操作/, 'it must not claim the setting is in place');
 });
 
-test('synced bind capability is reported as handled', async () => {
+// The permission itself is an implementation detail of the package: a NAS user
+// can neither understand it nor act on it, so it must never appear.
+test('the capability name never reaches the user', async () => {
+	for (const modeSynced of [true, false]) {
+		const root = await renderWith({
+			'api/status': {
+				...connected, core_installed: true, cli_installed: true,
+				tun_capable: false, bind_capable: false, mode_synced: modeSynced,
+			},
+		});
+		const notice = texts(root).join('\n');
+		assert.doesNotMatch(notice, /CAP_NET_RAW/, 'no capability name may be shown');
+		assert.doesNotMatch(notice, /不绑定网卡/, 'no internal mode name may be shown');
+		assert.doesNotMatch(notice, /绑定到网卡/, 'no internal mechanism may be shown');
+		assert.doesNotMatch(notice, /setcap cap_net_raw/, 'no shell command for this case');
+	}
+});
+
+// Once the setting is in place the user has nothing to do and nothing to know.
+test('synced bind capability shows no notice at all', async () => {
 	const root = await renderWith({
 		'api/status': {
 			...connected, core_installed: true, cli_installed: true,
@@ -115,8 +132,9 @@ test('synced bind capability is reported as handled', async () => {
 		},
 	});
 	const notice = texts(root).join('\n');
-	assert.match(notice, /已自动在 EasyTier Console 上为本机节点关闭该绑定/);
+	assert.doesNotMatch(notice, /不绑定网卡/);
 	assert.doesNotMatch(notice, /登录 EasyTier Console/);
+	assert.doesNotMatch(notice, /CAP_NET_RAW/);
 });
 
 test('no warning once the capability is present', async () => {

@@ -446,24 +446,20 @@ function tunGrantCommand(status) {
 }
 
 /* 缺少 CAP_NET_RAW 时节点能注册但连不上任何 peer。这个设置由守护进程自动写到 Console
-   上（节点的 bind_device override），因此不需要管理员做任何事；这里只说明当前处于该模式。 */
+   上（节点的 bind_device override），正常工作时用户完全不需要知道它的存在，因此不显示
+   任何提示。只有同步还没完成、peer 确实连不上时，才提示用户需要先登录 Console。
+
+   提示里不提权限名：这是套件内部的实现细节，用户既看不懂也无法处理。 */
 function bindNotice(status) {
-	if (!status.core_installed || status.bind_capable) {
+	if (!status.core_installed || status.bind_capable || status.mode_synced) {
 		return null;
 	}
-	if (!status.mode_synced) {
-		// The setting lives on the Console, and writing it needs a Console
-		// session. Saying it was handled when it was not would send the
-		// operator looking in the wrong place for why the node has no peers.
-		return banner(h('div', {}, [
-			h('p', { text: '本机缺少 CAP_NET_RAW：EasyTier 默认会把出站连接绑定到网卡，而 DSM 不允许套件持有该权限，因此本机目前无法连接任何 peer（节点列表为空）。' }),
-			h('p', { text: '这个设置需要写入 EasyTier Console，而写入需要 Console 登录。请先「登录 EasyTier Console」，本机会自动在 Console 上关闭该绑定。' }),
-		]), 'error');
-	}
+	// The setting lives on the Console, and writing it needs a Console session.
+	// This is why the node still has no peers, so say what the user can do.
 	return banner(h('div', {}, [
-		h('p', { text: '本机以「不绑定网卡」方式连接：DSM 不允许套件持有 CAP_NET_RAW，而 EasyTier 默认会把出站连接绑定到网卡。' }),
-		h('p', { class: 'muted', text: '守护进程已自动在 EasyTier Console 上为本机节点关闭该绑定，无需任何手工操作，连接与节点访问都正常。' }),
-	]), 'info');
+		h('p', { text: '本机尚未完成网络设置同步，目前无法连接网络中的其它设备。' }),
+		h('p', { text: '请先登录 EasyTier Console，本机会自动完成设置。' }),
+	]), 'error');
 }
 
 function runtimeDir(status) {
