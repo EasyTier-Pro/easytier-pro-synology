@@ -113,7 +113,14 @@ const networkRows = computed(() => {
 	const known = new Set(catalog.map((network) => network.id))
 	for (const item of joined.value) {
 		if (item && item.id && !known.has(item.id)) {
-			catalog.push({ id: item.id, network_name: item.network_name })
+			// A membership names its network with `name` and carries the subnet
+			// too; the catalogue is what names it `network_name`, so both spellings
+			// are copied. Without the name this entry would list as a bare uuid.
+			catalog.push({
+				id: item.id,
+				name: item.network_name || (typeof item.name === 'string' ? item.name : ''),
+				ipv4_cidr: typeof item.ipv4_cidr === 'string' ? item.ipv4_cidr : '',
+			})
 		}
 	}
 	return catalog.map((network) => ({

@@ -422,6 +422,30 @@ describe('overview region updates', () => {
 		expect(wrapper.text()).toContain('重新登录 DSM')
 	})
 
+	// A machine can be joined to a network the catalogue does not list. The
+	// membership is then the only description of it, and it names the network with
+	// `name` rather than `network_name` - the shapes below are copied from the
+	// Console's real answer. Getting this wrong lists the network as a bare uuid.
+	it('names a joined network the catalogue does not list', async () => {
+		const wrapper = await mountView({
+			networks: {
+				machine_id: 'm1',
+				machine: {
+					networks: [
+						{ id: 'joined-only', name: '只有成员关系的网络', ipv4_cidr: '10.9.9.0/24', node_ipv4: '10.9.9.4' },
+					],
+				},
+				networks: [ { id: 'n1', name: 'Home', ipv4_cidr: '10.144.0.0/16' } ],
+				enrolled: true,
+			},
+		})
+
+		expect(wrapper.text()).toContain('只有成员关系的网络')
+		expect(wrapper.text()).toContain('10.9.9.0/24')
+		expect(wrapper.text()).toContain('退出 只有成员关系的网络')
+		expect(wrapper.text()).not.toContain('joined-only')
+	})
+
 	// A component used in a template without being imported renders as an unknown
 	// element, which produces a page that looks broken but raises no error. This
 	// checks the whole view instead of trusting each file's imports.
