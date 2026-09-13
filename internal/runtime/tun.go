@@ -19,15 +19,20 @@ const capabilityXattr = "security.capability"
 // administrator (setcap on the runtime binary). Outside DSM the daemon may run
 // as root, which is enough on its own.
 func tunCapable(corePath string) bool {
+	return fileCapability(corePath, capNetAdmin)
+}
+
+// fileCapability reports whether a non-root exec of path obtains one capability.
+func fileCapability(path string, capability int) bool {
 	if os.Geteuid() == 0 {
 		return true
 	}
 	buffer := make([]byte, 24)
-	size, err := syscall.Getxattr(corePath, capabilityXattr, buffer)
+	size, err := syscall.Getxattr(path, capabilityXattr, buffer)
 	if err != nil {
 		return false
 	}
-	return parseFileCapability(buffer[:size], capNetAdmin)
+	return parseFileCapability(buffer[:size], capability)
 }
 
 // capFlagsEffective is VFS_CAP_FLAGS_EFFECTIVE in the magic_etc word of a

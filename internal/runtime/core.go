@@ -348,7 +348,7 @@ func (m *Manager) apiHealthy(ctx context.Context) bool {
 		return false
 	}
 	output, err := combinedCommandOutput(ctx, 10*time.Second, downloadMaxVersionBytes, cli,
-		"-p", RPCPortal, "-o", "json", "node", "info")
+		"-p", rpcPortalAddress, "-o", "json", "node", "info")
 	if err == nil {
 		return true
 	}

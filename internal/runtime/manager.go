@@ -15,10 +15,6 @@ import (
 	"github.com/EasyTier-Pro/easytier-pro-dsm/internal/console"
 )
 
-// RPCPortal is the loopback management endpoint of easytier-core. It is the
-// same address the OpenWrt client uses.
-const RPCPortal = "127.0.0.1:15888"
-
 // healthAttempts is how long the runtime waits for a starting core to answer
 // the management RPC, in seconds.
 const healthAttempts = 90
@@ -146,8 +142,8 @@ func (m *Manager) coreEnv(settings config.Settings, token string) ([]string, err
 		"ET_CONFIG_SERVER="+config.NormalizeConfigServer(settings.ConfigServer)+"/"+token,
 		"ET_MACHINE_ID="+machineID,
 		"ET_HOSTNAME="+hostname,
-		"ET_RPC_PORTAL="+RPCPortal,
-		"ET_RPC_PORTAL_WHITELIST=127.0.0.1/32,::1/128",
+		"ET_RPC_PORTAL="+rpcPortalListen,
+		"ET_RPC_PORTAL_WHITELIST="+rpcPortalWhitelist,
 		"ET_CONSOLE_LOG_LEVEL=off",
 	)
 	return env, nil

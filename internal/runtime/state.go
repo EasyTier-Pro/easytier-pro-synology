@@ -126,7 +126,7 @@ func (m *Manager) LocalSummary(ctx context.Context) (LocalSummary, *apperr.Error
 
 // cliCapture runs one easytier-cli query and returns its JSON output.
 func (m *Manager) cliCapture(ctx context.Context, args ...string) (json.RawMessage, bool) {
-	query := append([]string{"-p", RPCPortal, "-o", "json"}, args...)
+	query := append([]string{"-p", rpcPortalAddress, "-o", "json"}, args...)
 	output, err := commandOutput(ctx, 15*time.Second, m.paths.CLIbinary(), query...)
 	if err != nil || strings.TrimSpace(output) == "" {
 		return nil, false

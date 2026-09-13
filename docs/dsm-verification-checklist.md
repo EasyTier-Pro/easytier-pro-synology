@@ -102,7 +102,19 @@ curl 登录得到的会话可以正常返回用户名）。真实会话只能在
    nginx 路由，需要套件通过 `web-config` worker 提供（本仓库的 `spk/nginx/easytier-pro.conf`）。
 5. **DSM 不对包内 CGI/静态文件做登录门禁**（无 Cookie 访问返回 200），鉴权必须由套件自己完成。
    会话本身由 DSM 判定，见上文「本机 API 鉴权：实测结论与实现」。
-6. **nginx 注入的 `ports` 声明**：`web-config` worker 的 `ports` 是给 nginx 预留端口用的，
+6. **RPC 管理端口必须监听未指定地址**：core 会把管理套接字绑定到承载端口地址的网卡
+   （`SO_BINDTODEVICE`，见 `easytier/src/tunnel/common.rs`），而 Linux 只允许带 `CAP_NET_RAW`
+   的进程这么做。套件没有该能力，因此若把 `ET_RPC_PORTAL` 设为具体环回地址（如 `127.0.0.1:15888`），
+   core 解析出 `lo` 后绑定失败，**启动即以 `failed to listen: Operation not permitted` 退出**
+   （实测：同一二进制以 root 运行正常，以套件用户运行失败）。
+   改用未指定地址 `0.0.0.0:15888` 即可：`get_interface_name_by_ip` 对 unspecified 地址返回
+   `None`，core 会跳过该绑定。**安全性由 core 自己的白名单保证，而不是监听地址**：
+   `ET_RPC_PORTAL_WHITELIST` 设为 `127.0.0.0/8,::1/128`（即 EasyTier 内置默认值），
+   非环回客户端会被 core 拒绝。实测：监听 `0.0.0.0:15899` 时，本机 `easytier-cli` 正常，
+   从另一台主机（`10.147.223.128`）调用被拒，core 日志记录
+   `Rpc portal client IP ... not in whitelist ..., ignoring client`。
+   **该白名单是此端点的安全边界，不得放宽到包含非环回地址。**
+7. **nginx 注入的 `ports` 声明**：`web-config` worker 的 `ports` 是给 nginx 预留端口用的，
    `enable`/`disable` 同时声明同一端口会导致 `Runtime port ... conflict for nginx` 并使套件启动失败
    （272）。本项目只注入 location，不声明端口。
 
