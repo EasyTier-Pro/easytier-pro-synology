@@ -60,8 +60,8 @@
 | B9 | ⚠️ | 重启 DSM 后套件自动启动、守护进程与 API 恢复（日志显示开机即启动）；`running` 需先连接 Console 并下载运行时 |
 | B10 | ✅ | 升级到更高版本后 `state/upgrade-marker` 与 `state/machine-id` 均保留（修复了升级误删状态的问题） |
 | B11 | ✅ | 卸载后 `/volume1/@appdata/easytier-pro/` 为空，nginx 注入链接被移除，守护进程退出 |
-| B12 | ⛔ | 受 DSM 权限模型限制，见下节「平台约束」 |
-| B13 | ⛔ | 依赖 B12（需要先能运行 core） |
+| B12 | ✅（已实现，待接 Console 复测） | 默认以 `--no-tun` 中继模式运行：节点仍出现在 Console，但本机没有虚拟 IP；授予 `cap_net_admin` 后重启连接切换为完整模式，TUN 网卡出现在 `local-summary.interfaces`。实测证据：无特权时 core 报 `tun device error ... Operation not permitted`，以 root 运行同一二进制则 `tun device ready dev="etp0"` |
+| B13 | ✅（本地 e2e 已验证，DSM 侧同 B12 待复测） | core 退出后由守护进程按退避重启（本地 e2e 实测 2 秒内拉起）；重启逻辑与是否中继模式无关，中继模式下 core 同样常驻 |
 | B14 | ✅ | 「打开 Console」按钮按地址推导规则在新标签页打开（界面逻辑已在浏览器中验证） |
 | B15 | ✅ | 断开/重连逻辑同 A6，已在本地 e2e 环境验证 |
 
@@ -85,14 +85,28 @@
    `enable`/`disable` 同时声明同一端口会导致 `Runtime port ... conflict for nginx` 并使套件启动失败
    （272）。本项目只注入 location，不声明端口。
 
-### 剩余工作（B12/B13）
+### 虚拟网卡（B12/B13）：已实现的行为
 
-无特权的 `easytier-core` 无法创建 TUN；`--no-tun` 模式实测可正常启动（可作为中继/子网代理节点，
-但没有虚拟 IP）。若要让 NAS 拥有虚拟 IP，需要管理员一次性授予文件能力：
+DSM 不允许第三方套件以 root 运行，也无从获得 capability，因此守护进程在每次启动时检查运行时
+二进制的文件能力（`security.capability` 中的 `CAP_NET_ADMIN`），并把结果同步到 Console：
 
-```sh
-sudo setcap cap_net_admin,cap_net_raw+ep /volume*/@appdata/easytier-pro/runtime/easytier-core
-```
+1. **默认（未授权）**：守护进程把本机在 Console 上的节点设为「无 TUN 模式」
+   （`PUT /api/v1/tenants/{ws}/nodes/{id}/config`，在节点 override 中写入 `no_tun: true`），
+   本机作为中继/子网代理节点加入网络，但没有虚拟 IP。概览页显示「运行模式：中继模式（无虚拟 IP）」
+   并给出一次性授权命令。命令按当前套件数据目录生成，界面提供「复制命令」按钮。
+   DSM 的 `/tmp` 为 `noexec`，命令必须指向运行时目录。
+2. **管理员授权后**：capability 在每次启动时重新检查；一旦检测到，守护进程会**自动删除**该
+   `no_tun` override，恢复完整模式，TUN 设备出现在概览页与 `local-summary.interfaces`。
+3. **重新下载运行时后**：新二进制会丢失文件能力，守护进程会自动重新写入 `no_tun`，无需手工判断。
 
-（每次重新下载运行时后需要再执行一次。）具体采用哪种模式（自动降级 / 提示授权 / 仅中继）
-待与用户确认后实现。
+**为什么必须写 Console，而不是启动参数**：`--no-tun` 加在 `easytier-core` 命令行上没有任何效果。
+secure mode 下 core 自身不建网络（`crate_cli_network` 为 false），实例配置全部由 Console 下发；
+下发的 `NetworkConfig` 经 `gen_config()` 从 `gen_default_flags()` 构造，`no_tun` 默认 false，
+只有 Console 给出的值才会生效（`no_tun` 属于 Console 的受管字段）。
+实测：以非 root 运行 core、不带 `--no-tun`，仅在 Console 上设置 `no_tun: true`，
+core 常驻、不创建 TUN、并成功入网。
+
+**注意**：写节点配置的 `PUT` 必须使用**每次唯一**的 `Idempotency-Key`。Console 会按
+idempotency key 记录该节点的 reconfigure 操作，再次收到同一个 key 时直接返回已记录的操作、
+**不应用新配置**。实测：同一 key 先写 `{"no_tun":true}` 再写 `{}`，第二次返回 HTTP 200 但
+override 仍为 `{"no_tun":true}`；换一个新 key 才真正生效。

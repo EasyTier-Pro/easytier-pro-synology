@@ -180,7 +180,7 @@ func (s *coreSupervisor) startProcess() (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(s.m.paths.CoreBinary(), "--secure-mode=true")
+	cmd := exec.Command(s.m.paths.CoreBinary(), coreArgs()...)
 	cmd.Env = env
 	cmd.Dir = s.m.paths.RuntimeDir()
 	cmd.Stdin = nil
@@ -191,6 +191,16 @@ func (s *coreSupervisor) startProcess() (*exec.Cmd, error) {
 	}
 	s.m.writeCorePID(cmd.Process.Pid)
 	return cmd, nil
+}
+
+// coreArgs builds the command line of the core.
+//
+// Relay mode is deliberately absent: in secure mode the core runs no network of
+// its own and every instance comes from the Console, so a --no-tun flag here
+// would be ignored. The mode is negotiated with the Console instead (see
+// Manager.SyncRelayMode).
+func coreArgs() []string {
+	return []string{"--secure-mode=true"}
 }
 
 // awaitHealthy reports whether the management API became reachable before the

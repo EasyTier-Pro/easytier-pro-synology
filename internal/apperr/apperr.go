@@ -43,6 +43,7 @@ const (
 	CodeNetworkLeaveFailed          = "network_leave_failed"
 	CodeNetworkLookupFailed         = "network_lookup_failed"
 	CodeNodeLookupFailed            = "node_lookup_failed"
+	CodeRelayModeFailed             = "relay_mode_failed"
 	CodeNoWorkspace                 = "no_workspace"
 	CodeDownloadBusy                = "download_busy"
 	CodeConnectionChangeBusy        = "connection_change_busy"
@@ -92,6 +93,7 @@ var messages = map[string]string{
 	CodeNetworkLeaveFailed:          "Console 无法把本机移出该网络。",
 	CodeNetworkLookupFailed:         "无法读取工作空间网络。",
 	CodeNodeLookupFailed:            "无法读取网络节点。",
+	CodeRelayModeFailed:             "无法在 EasyTier Console 上切换本机的运行模式。",
 	CodeNoWorkspace:                 "请先选择 Console 工作空间。",
 	CodeDownloadBusy:                "已有更新在进行中。",
 	CodeConnectionChangeBusy:        "已有本机设置变更在进行中。",

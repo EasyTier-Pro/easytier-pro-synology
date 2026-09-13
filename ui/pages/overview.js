@@ -253,7 +253,7 @@ export async function render() {
 			return;
 		}
 		if (!status.running) {
-			host.replaceChildren(renderServiceStopped({ reset }));
+			host.replaceChildren(renderServiceStopped(status, { reset }));
 			return;
 		}
 		host.replaceChildren(loading('正在读取本机连接状态…'));
@@ -415,8 +415,41 @@ function pollDownload(host, { reset }) {
 	after(1500, tick);
 }
 
+/* 缺少 CAP_NET_ADMIN 时本机只能中继运行：给出管理员一次性授权命令。 */
+function tunGrantCommand(status) {
+	const runtimeDir = status.install_dir || '/volume1/@appdata/easytier-pro/runtime';
+	return `sudo setcap cap_net_admin,cap_net_raw+ep ${runtimeDir}/easytier-core`;
+}
+
+function tunNotice(status) {
+	if (!status.core_installed || status.tun_capable) {
+		return null;
+	}
+	const command = tunGrantCommand(status);
+	return banner(h('div', {}, [
+		h('p', { text: '本机当前以「中继模式」运行：DSM 不允许套件以 root 运行，套件因此没有创建虚拟网卡的权限，本机没有自己的虚拟 IP，但仍会加入网络并为其转发流量。' }),
+		h('p', {}, [
+			'已自动在 EasyTier Console 上把本机节点设为「无 TUN 模式」，这样下发的配置才与本机权限一致。',
+			h('br'),
+			'授予权限后本机会自动取消该设置，恢复完整模式。',
+		]),
+		h('p', { class: 'muted', text: '需要虚拟 IP 时，请以管理员身份执行下面这条命令（SSH，或用「控制面板 → 任务计划」新建一个以 root 运行的脚本任务），然后重新启动套件：' }),
+		h('div', { class: 'row' }, [
+			h('code', { class: 'mono', text: command }),
+			button('复制命令', {
+				onclick: () => {
+					navigator.clipboard.writeText(command)
+						.then(() => notify('命令已复制。', 'success'))
+						.catch(() => notify('复制失败，请手动选择命令文本。', 'error'));
+				},
+			}),
+		]),
+		h('p', { class: 'muted', text: '提示：每次重新下载运行时后，新文件都会丢失该权限，本页会再次显示这条提示。' }),
+	]), 'warning');
+}
+
 /* 5. 服务停止：运行时已安装且已配置，但服务未运行。 */
-function renderServiceStopped({ reset }) {
+function renderServiceStopped(status, { reset }) {
 	const startButton = button('启动连接', {
 		variant: 'primary',
 		onclick: () => {
@@ -431,12 +464,13 @@ function renderServiceStopped({ reset }) {
 		},
 	});
 	return card('启动连接', [
+		tunNotice(status),
 		h('p', { text: 'EasyTier 已安装，本机也已与账号关联。启动连接后，本机就会加入所选的私有网络。' }),
 		h('div', { class: 'row' }, [
 			startButton,
 			button('断开本机', { variant: 'danger', onclick: () => confirmDisconnect(reset) }),
 		]),
-	], '本机已准备就绪');
+	].filter(Boolean), '本机已准备就绪');
 }
 
 /* 6. 运行中：状态摘要 + 网络列表 + 账号操作。 */
@@ -459,14 +493,16 @@ function renderRunning(status, auth, summary, networks, { reset, loggedIn }) {
 		? networks.machine.networks
 		: [];
 	const summaryCard = card('连接状态', [
+		tunNotice(status),
 		detailList([
+			[ '运行模式', status.tun_capable ? '完整模式' : '中继模式（无虚拟 IP）' ],
 			[ '本机虚拟 IP', ipv4 ? h('span', { class: 'mono', text: ipv4 }) : '' ],
 			[ 'Peer 数', String(peers) ],
 			[ 'TUN 设备', interfaces.length ? interfaces.join(', ') : '' ],
 			[ 'Core 版本', valueOrDash(status.core_version) ],
 			[ 'CLI 版本', valueOrDash(status.cli_version) ],
 		]),
-	]);
+	].filter(Boolean));
 	sections.push(summaryCard);
 
 	if (!networks) {

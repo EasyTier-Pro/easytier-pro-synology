@@ -32,6 +32,7 @@ type Status struct {
 	ConsoleURL           string `json:"console_url,omitempty"`
 	AllowInsecureConsole bool   `json:"allow_insecure_console"`
 	InstallDir           string `json:"install_dir"`
+	TUNCapable           bool   `json:"tun_capable"`
 }
 
 // Status reports the current runtime state.
@@ -40,17 +41,20 @@ func (m *Manager) Status() (Status, *apperr.Error) {
 	if err != nil {
 		return Status{}, apperr.New(apperr.CodeStateUnavailable)
 	}
+	coreBinary := m.paths.CoreBinary()
+	coreInstalled := isExecutable(coreBinary)
 	status := Status{
 		Enabled:              settings.Enabled,
 		Running:              m.core != nil && m.core.Running(),
 		TokenPresent:         m.store.HasBootstrapToken(),
-		CoreInstalled:        isExecutable(m.paths.CoreBinary()),
+		CoreInstalled:        coreInstalled,
 		CLIInstalled:         isExecutable(m.paths.CLIbinary()),
 		WorkspaceID:          settings.ActiveWorkspaceID,
 		ConfigServer:         settings.ConfigServer,
 		ConsoleURL:           settings.ConsoleURL,
 		AllowInsecureConsole: settings.AllowInsecureConsole,
 		InstallDir:           m.paths.RuntimeDir(),
+		TUNCapable:           coreInstalled && tunCapable(coreBinary),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

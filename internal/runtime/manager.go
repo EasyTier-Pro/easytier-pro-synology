@@ -78,6 +78,7 @@ func (m *Manager) Start(ctx context.Context) error {
 
 	m.ops.Start(ctx)
 	m.refreshDesired()
+	m.startRelayModeSync(ctx)
 	return nil
 }
 

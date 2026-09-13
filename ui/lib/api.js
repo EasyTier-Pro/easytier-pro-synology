@@ -35,6 +35,7 @@ const errorMessages = {
 	network_join_failed: 'Console 无法把本机加入该网络。',
 	network_leave_failed: 'Console 无法把本机移出该网络。',
 	network_lookup_failed: '无法读取工作空间网络。',
+	relay_mode_failed: '无法在 EasyTier Console 上切换本机的运行模式。',
 	no_bootstrap_token: '请先连接本机。',
 	no_device_auth: '请先开始 Console 登录。',
 	no_workspace: '请先选择 Console 工作空间。',
