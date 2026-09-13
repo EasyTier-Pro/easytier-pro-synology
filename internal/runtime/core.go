@@ -1,0 +1,356 @@
+package runtime
+
+import (
+	"context"
+	"io"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+)
+
+// Respawn behaviour of the local EasyTier core.
+const (
+	restartBackoffMin = 1 * time.Second
+	restartBackoffMax = 60 * time.Second
+	// restartHealthyRun is how long a core must stay up before its next exit
+	// is treated as a fresh failure rather than a flapping restart.
+	restartHealthyRun = 60 * time.Second
+	// unstartableRetry is how long the supervisor waits before re-testing a
+	// configuration that cannot start at all.
+	unstartableRetry = 30 * time.Second
+	// staleCoreGrace is how long a leftover core from a previous run may take
+	// to exit before it is killed.
+	staleCoreGrace = 5 * time.Second
+)
+
+// coreSupervisor keeps easytier-core running for as long as the local
+// configuration asks for it, restarting it with a bounded backoff.
+type coreSupervisor struct {
+	m   *Manager
+	ctx context.Context
+
+	wake chan struct{}
+
+	mu      sync.Mutex
+	desired bool
+	proc    *os.Process
+	exited  chan struct{}
+	backoff time.Duration
+}
+
+func newCoreSupervisor(m *Manager, ctx context.Context) *coreSupervisor {
+	return &coreSupervisor{m: m, ctx: ctx, wake: make(chan struct{}, 1), backoff: restartBackoffMin}
+}
+
+// Start launches the supervision loop.
+func (s *coreSupervisor) Start() {
+	go s.run()
+}
+
+// SetDesired declares whether the core should be running.
+func (s *coreSupervisor) SetDesired(desired bool) {
+	s.mu.Lock()
+	changed := s.desired != desired
+	s.desired = desired
+	s.mu.Unlock()
+	if changed {
+		s.signal()
+	}
+}
+
+// pid returns the supervised process id, or 0 when no core runs.
+func (s *coreSupervisor) pid() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.proc == nil {
+		return 0
+	}
+	return s.proc.Pid
+}
+
+// Running reports whether a core process is currently supervised.
+func (s *coreSupervisor) Running() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.proc != nil
+}
+
+func (s *coreSupervisor) isDesired() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.desired
+}
+
+func (s *coreSupervisor) signal() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (s *coreSupervisor) setProcess(proc *os.Process, exited chan struct{}) {
+	s.mu.Lock()
+	s.proc = proc
+	s.exited = exited
+	s.mu.Unlock()
+}
+
+func (s *coreSupervisor) clearProcess() {
+	s.mu.Lock()
+	s.proc = nil
+	s.exited = nil
+	s.mu.Unlock()
+}
+
+func (s *coreSupervisor) run() {
+	for {
+		if s.ctx.Err() != nil {
+			return
+		}
+		if !s.isDesired() {
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-s.wake:
+			}
+			continue
+		}
+		cmd, err := s.startProcess()
+		if err != nil {
+			s.m.log.Errorf("EasyTier core 未启动: %v", err)
+			s.sleep(unstartableRetry)
+			continue
+		}
+		s.m.log.Printf("EasyTier core 已启动，PID %d", cmd.Process.Pid)
+		exited := make(chan struct{})
+		s.setProcess(cmd.Process, exited)
+		startedAt := time.Now()
+		s.awaitHealthy(cmd.Process)
+		waitErr := cmd.Wait()
+		close(exited)
+		s.clearProcess()
+		s.m.removeCorePID()
+
+		if s.ctx.Err() != nil {
+			return
+		}
+		if !s.isDesired() {
+			s.m.log.Printf("EasyTier core 已停止")
+			continue
+		}
+		s.m.log.Errorf("EasyTier core 已退出: %v", waitErr)
+		delay := s.nextBackoff(time.Since(startedAt))
+		s.m.log.Printf("%s 后重新启动 EasyTier core", delay)
+		s.sleep(delay)
+	}
+}
+
+// startProcess spawns the core with the environment the Console contract
+// requires. Its output is discarded: the configuration URL carries the
+// enrollment token.
+func (s *coreSupervisor) startProcess() (*exec.Cmd, error) {
+	if err := s.m.coreStartBlocker(); err != nil {
+		return nil, err
+	}
+	settings, err := s.m.store.Settings()
+	if err != nil {
+		return nil, err
+	}
+	token, err := s.m.store.ReadBootstrapToken()
+	if err != nil {
+		return nil, err
+	}
+	env, err := s.m.coreEnv(settings, token)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(s.m.paths.CoreBinary(), "--secure-mode=true")
+	cmd.Env = env
+	cmd.Dir = s.m.paths.RuntimeDir()
+	cmd.Stdin = nil
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	s.m.writeCorePID(cmd.Process.Pid)
+	return cmd, nil
+}
+
+// awaitHealthy reports whether the management API became reachable before the
+// process exited or the attempt budget ran out.
+func (s *coreSupervisor) awaitHealthy(proc *os.Process) bool {
+	for attempt := 0; attempt < healthAttempts; attempt++ {
+		if !processAlive(proc) {
+			return false
+		}
+		if s.m.apiHealthy(s.ctx) {
+			return true
+		}
+		select {
+		case <-s.ctx.Done():
+			return false
+		case <-time.After(time.Second):
+		}
+	}
+	return false
+}
+
+// EnsureHealthy asks the supervisor to run the core and waits until the
+// management API answers.
+func (s *coreSupervisor) EnsureHealthy(ctx context.Context) bool {
+	s.SetDesired(true)
+	for attempt := 0; attempt < healthAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return false
+		}
+		if s.Running() && s.m.apiHealthy(ctx) {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(time.Second):
+		}
+	}
+	return false
+}
+
+// StopAndWait stops the core, escalating to SIGKILL when it does not exit.
+func (s *coreSupervisor) StopAndWait(ctx context.Context) {
+	s.mu.Lock()
+	s.desired = false
+	proc := s.proc
+	exited := s.exited
+	s.mu.Unlock()
+	s.signal()
+	if proc == nil || exited == nil {
+		return
+	}
+	_ = proc.Signal(syscall.SIGTERM)
+	select {
+	case <-exited:
+		return
+	case <-time.After(closeTimeout):
+	case <-ctx.Done():
+	}
+	_ = proc.Kill()
+	select {
+	case <-exited:
+	case <-time.After(closeTimeout):
+	case <-ctx.Done():
+	}
+}
+
+// ResetBackoff forgets accumulated restart delays after a deliberate change.
+func (s *coreSupervisor) ResetBackoff() {
+	s.mu.Lock()
+	s.backoff = restartBackoffMin
+	s.mu.Unlock()
+}
+
+func (s *coreSupervisor) nextBackoff(runFor time.Duration) time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if runFor >= restartHealthyRun {
+		s.backoff = restartBackoffMin
+	}
+	delay := s.backoff
+	if s.backoff < restartBackoffMax {
+		s.backoff *= 2
+		if s.backoff > restartBackoffMax {
+			s.backoff = restartBackoffMax
+		}
+	}
+	return delay
+}
+
+func (s *coreSupervisor) sleep(duration time.Duration) {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-s.ctx.Done():
+	case <-s.wake:
+	case <-timer.C:
+	}
+}
+
+func processAlive(proc *os.Process) bool {
+	if proc == nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
+}
+
+// apiHealthy reports whether the core management RPC answers. A core that is
+// up but not joined to any network is healthy too; that state is reported on
+// stderr, so both streams are read.
+func (m *Manager) apiHealthy(ctx context.Context) bool {
+	cli := m.paths.CLIbinary()
+	if !isExecutable(cli) {
+		return false
+	}
+	output, err := combinedCommandOutput(ctx, 10*time.Second, downloadMaxVersionBytes, cli,
+		"-p", RPCPortal, "-o", "json", "node", "info")
+	if err == nil {
+		return true
+	}
+	for _, line := range strings.Split(output, "\n") {
+		if strings.TrimSpace(line) == "Error: no running instances found" {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) writeCorePID(pid int) {
+	if err := os.WriteFile(m.paths.CorePIDFile(), []byte(strconv.Itoa(pid)+"\n"), 0o600); err != nil {
+		m.log.Errorf("记录 EasyTier core PID 失败: %v", err)
+	}
+}
+
+func (m *Manager) removeCorePID() {
+	os.Remove(m.paths.CorePIDFile())
+}
+
+// stopStaleCore kills a core that outlived a previous daemon run.
+func (m *Manager) stopStaleCore() {
+	data, err := os.ReadFile(m.paths.CorePIDFile())
+	if err != nil {
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		os.Remove(m.paths.CorePIDFile())
+		return
+	}
+	if !m.coreProcessMatches(pid) {
+		os.Remove(m.paths.CorePIDFile())
+		return
+	}
+	m.log.Printf("停止上次残留的 EasyTier core（PID %d）", pid)
+	_ = syscall.Kill(pid, syscall.SIGTERM)
+	deadline := time.Now().Add(staleCoreGrace)
+	for time.Now().Before(deadline) {
+		if !m.coreProcessMatches(pid) {
+			os.Remove(m.paths.CorePIDFile())
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	_ = syscall.Kill(pid, syscall.SIGKILL)
+	os.Remove(m.paths.CorePIDFile())
+}
+
+// coreProcessMatches reports whether pid is still our easytier-core.
+func (m *Manager) coreProcessMatches(pid int) bool {
+	cmdline, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+	if err != nil {
+		return false
+	}
+	return strings.Contains(strings.ReplaceAll(string(cmdline), "\x00", " "), m.paths.CoreBinary())
+}

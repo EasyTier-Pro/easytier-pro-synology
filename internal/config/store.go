@@ -117,6 +117,16 @@ func (s *Store) ReadBootstrapToken() (string, error) {
 	return token, err
 }
 
+// RestoreBootstrapToken replaces the enrollment token with the contents of a
+// backup file written by a connection transaction.
+func (s *Store) RestoreBootstrapToken(source string) error {
+	token, err := ReadSecret(source)
+	if err != nil {
+		return err
+	}
+	return s.SaveBootstrapToken(token)
+}
+
 // HasBootstrapToken reports whether a usable enrollment token exists.
 func (s *Store) HasBootstrapToken() bool {
 	_, err := s.ReadBootstrapToken()

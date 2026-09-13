@@ -69,6 +69,7 @@ func (p Paths) UpdateTransactionFile() string {
 }
 func (p Paths) DaemonLogFile() string { return filepath.Join(p.LogsDir(), "daemon.log") }
 func (p Paths) PidFile() string       { return filepath.Join(p.RunDir(), "daemon.pid") }
+func (p Paths) CorePIDFile() string   { return filepath.Join(p.RunDir(), "core.pid") }
 
 func (p Paths) CoreBinary() string   { return filepath.Join(p.RuntimeDir(), "easytier-core") }
 func (p Paths) CLIbinary() string    { return filepath.Join(p.RuntimeDir(), "easytier-cli") }

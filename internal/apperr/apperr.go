@@ -46,6 +46,7 @@ const (
 	CodeNoWorkspace                 = "no_workspace"
 	CodeDownloadBusy                = "download_busy"
 	CodeConnectionChangeBusy        = "connection_change_busy"
+	CodeInvalidConnectionOperation  = "invalid_connection_operation"
 	CodeConnectionChangeNotFound    = "connection_change_not_found"
 	CodeConnectionChangeStartFailed = "connection_change_start_failed"
 	CodeConnectionChangeInterrupted = "connection_change_interrupted"
@@ -94,6 +95,7 @@ var messages = map[string]string{
 	CodeNoWorkspace:                 "请先选择 Console 工作空间。",
 	CodeDownloadBusy:                "已有更新在进行中。",
 	CodeConnectionChangeBusy:        "已有本机设置变更在进行中。",
+	CodeInvalidConnectionOperation:  "该操作编号无效。",
 	CodeConnectionChangeNotFound:    "该操作记录已不存在。",
 	CodeConnectionChangeStartFailed: "无法在后台启动本机设置变更。",
 	CodeConnectionChangeInterrupted: "上次设置变更被中断，请重试。",
