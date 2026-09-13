@@ -36,6 +36,19 @@ type Manager struct {
 	core *coreSupervisor
 	dl   *downloadState
 	ops  *operationSet
+
+	// syncState remembers the outcome of the mode negotiation. It has its own
+	// lock because the watch runs outside the mutation lock.
+	syncState struct {
+		mu sync.Mutex
+		// lastError is the most recent failure, so the watch reports a
+		// persisting problem once instead of at every interval.
+		lastError string
+		// applied is the mode the Console was last told about, and synced
+		// whether that write succeeded.
+		applied console.NodeMode
+		synced  bool
+	}
 }
 
 // NewManager wires a manager to the package roots, state store and Console

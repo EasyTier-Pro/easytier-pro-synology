@@ -138,6 +138,15 @@ DSM 不允许第三方套件以 root 运行，也无从获得 capability，因�
    两者都由守护进程自动写入 Console 的节点 override，**因此本套件可以做到零 capability、零 root
    操作**。`bind_device = false` 需要 Console 侧支持（见下）。
 
+   **写入需要 Console 登录**（所有 Console 接口都是租户作用域的）：
+
+   - 走「设备码登录 → 选择工作空间 → 激活」时，工作空间已知，连接后立即写入；
+   - 走**仅设备令牌**连接时，工作空间未知：守护进程会用 Console 会话查询账号的租户列表，找出
+     已登记本机的那一个并记住它（`internal/console/workspace.go`），随后立即写入。
+     实测：连接后 **3 秒内**完成；
+   - 若**完全没有 Console 会话**，则无法写入——此时日志会明确记录一次「请先登录 EasyTier Console」
+     （同一原因不重复刷屏），概览页也会提示需要登录，而**不会**谎称设置已完成。
+
 1. **默认（未授权）**：守护进程把本机在 Console 上的节点设为「无 TUN 模式」
    （`PUT /api/v1/tenants/{ws}/nodes/{id}/config`，在节点 override 中写入 `no_tun: true`），
    本机作为正常的网络成员加入：仍有虚拟 IP，可被其它节点访问，也可做子网路由与中继，只是本机

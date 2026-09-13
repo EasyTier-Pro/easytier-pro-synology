@@ -90,17 +90,33 @@ test('no-TUN notice describes reachability, not isolation', async () => {
 	assert.doesNotMatch(notice, /没有虚拟 IP/, 'the node does have a virtual IP');
 });
 
-// Without CAP_NET_RAW the core cannot bind its sockets to an interface. The
-// daemon handles that by writing the setting on the Console, so the interface
-// has to say it is handled rather than send the operator looking for a shell.
-test('missing bind capability is explained as handled, not as a task', async () => {
+// Without CAP_NET_RAW the core cannot bind its sockets to an interface, and the
+// fix lives on the Console. The interface may only claim that was done when it
+// actually was: writing the setting needs a Console session.
+test('unsynced bind capability asks for a Console login, not a shell', async () => {
 	const root = await renderWith({
-		'api/status': { ...connected, core_installed: true, cli_installed: true, tun_capable: false, bind_capable: false },
+		'api/status': {
+			...connected, core_installed: true, cli_installed: true,
+			tun_capable: false, bind_capable: false, mode_synced: false,
+		},
 	});
 	const notice = texts(root).join('\n');
 	assert.match(notice, /CAP_NET_RAW/, 'the cause must be named');
-	assert.match(notice, /无需任何手工操作/, 'the operator must be told nothing is required');
-	assert.doesNotMatch(notice, /setcap cap_net_raw/, 'no shell command for this case');
+	assert.match(notice, /无法连接任何 peer/, 'the symptom must be named');
+	assert.match(notice, /登录 EasyTier Console/, 'the required action must be named');
+	assert.doesNotMatch(notice, /无需任何手工操作/, 'it must not claim the setting is in place');
+});
+
+test('synced bind capability is reported as handled', async () => {
+	const root = await renderWith({
+		'api/status': {
+			...connected, core_installed: true, cli_installed: true,
+			tun_capable: false, bind_capable: false, mode_synced: true,
+		},
+	});
+	const notice = texts(root).join('\n');
+	assert.match(notice, /已自动在 EasyTier Console 上为本机节点关闭该绑定/);
+	assert.doesNotMatch(notice, /登录 EasyTier Console/);
 });
 
 test('no warning once the capability is present', async () => {

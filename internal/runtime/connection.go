@@ -50,7 +50,12 @@ func (m *Manager) Activate(ctx context.Context, workspaceID, mode, keyID string)
 			return false, aerr
 		}
 		report("service")
-		return m.replaceConnection(ctx, plan.BootstrapToken, plan.ConfigServer, plan.WorkspaceID)
+		needsDownload, aerr := m.replaceConnection(ctx, plan.BootstrapToken, plan.ConfigServer, plan.WorkspaceID)
+		if aerr != nil {
+			return needsDownload, aerr
+		}
+		m.negotiateModeAfterConnect(ctx)
+		return needsDownload, nil
 	})
 	return operation, nil
 }
@@ -81,7 +86,12 @@ func (m *Manager) ConnectToken(ctx context.Context, token, configServer string) 
 			return false, apperr.New(apperr.CodeInvalidConfigServer)
 		}
 		report("service")
-		return m.replaceConnection(ctx, token, resolved, "")
+		needsDownload, aerr := m.replaceConnection(ctx, token, resolved, "")
+		if aerr != nil {
+			return needsDownload, aerr
+		}
+		m.negotiateModeAfterConnect(ctx)
+		return needsDownload, nil
 	})
 	return operation, nil
 }
@@ -251,6 +261,22 @@ func (m *Manager) replaceConnectionLocked(ctx context.Context, token, configServ
 		return m.failConnectionChangeLocked(ctx, apperr.New(apperr.CodeStateUnavailable))
 	}
 	return false, nil
+}
+
+// negotiateModeAfterConnect tells the Console which mode this device needs.
+//
+// Connecting changes what the Console must be asked, and for a connection made
+// with a device token alone it also reveals which workspace the device belongs
+// to. Waiting for the background watch would leave the node unable to start for
+// up to a full interval, so this runs right away.
+//
+// It is deliberately called by the callers of replaceConnection, after that
+// function released the mutation lock: it performs Console round trips, and
+// holding the lock across them would stall every other runtime change.
+func (m *Manager) negotiateModeAfterConnect(ctx context.Context) {
+	syncCtx, cancel := context.WithTimeout(ctx, relaySyncTimeout)
+	defer cancel()
+	m.syncRelayModeRetrying(syncCtx)
 }
 
 // failConnectionChangeLocked rolls the previous connection back and reports

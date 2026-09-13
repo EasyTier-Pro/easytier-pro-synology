@@ -57,13 +57,26 @@ func (m *Manager) NodeMode() console.NodeMode {
 // It is best effort: failures are reported to the caller, which logs them, and
 // never block starting, joining or leaving a network.
 func (m *Manager) SyncRelayMode(ctx context.Context) *apperr.Error {
-	if m.cli == nil || !m.cli.LoggedIn() {
+	if m.cli == nil {
 		return nil
 	}
 	if !m.store.HasBootstrapToken() {
 		return nil
 	}
 	mode := m.NodeMode()
+	if !mode.NoTun && !mode.DisableBindDevice {
+		// This device can do everything the core asks of it, so there is
+		// nothing to negotiate.
+		m.recordModeSync(mode, true)
+		return nil
+	}
+	if !m.cli.LoggedIn() {
+		// The settings still have to be written, but a device token alone
+		// cannot reach the Console API. Say so rather than skipping silently:
+		// the node will not start until the Console is told, and the operator
+		// needs to know why.
+		return apperr.New(apperr.CodeNotAuthenticated)
+	}
 	networks, aerr := m.cli.EnrolledNetworkIDs(ctx)
 	if aerr != nil {
 		return aerr
@@ -85,7 +98,33 @@ func (m *Manager) SyncRelayMode(ctx context.Context) *apperr.Error {
 			m.log.Printf("已按本机能力更新网络 %s 上的节点配置：%s", networkID, describeNodeMode(mode))
 		}
 	}
+	m.recordModeSync(mode, firstError == nil)
 	return firstError
+}
+
+// recordModeSync remembers what the Console was told, so the interface can tell
+// whether the settings it describes are actually in place.
+func (m *Manager) recordModeSync(mode console.NodeMode, ok bool) {
+	m.syncState.mu.Lock()
+	defer m.syncState.mu.Unlock()
+	if !ok {
+		m.syncState.synced = false
+		return
+	}
+	m.syncState.applied = mode
+	m.syncState.synced = true
+}
+
+// ModeSynced reports whether the Console has been told the mode this device
+// needs. A device that needs nothing is always in sync.
+func (m *Manager) ModeSynced() bool {
+	needed := m.NodeMode()
+	if !needed.NoTun && !needed.DisableBindDevice {
+		return true
+	}
+	m.syncState.mu.Lock()
+	defer m.syncState.mu.Unlock()
+	return m.syncState.synced && m.syncState.applied == needed
 }
 
 // describeNodeMode renders the mode for the log.
@@ -104,8 +143,22 @@ func describeNodeMode(mode console.NodeMode) string {
 }
 
 // syncRelayModeQuietly runs SyncRelayMode for callers that must not fail.
+//
+// The watch repeats this check, so an unchanged failure is reported once
+// instead of filling the log at every interval.
 func (m *Manager) syncRelayModeQuietly(ctx context.Context) {
-	if err := m.SyncRelayMode(ctx); err != nil {
+	err := m.SyncRelayMode(ctx)
+	if err == nil {
+		m.syncState.mu.Lock()
+		m.syncState.lastError = ""
+		m.syncState.mu.Unlock()
+		return
+	}
+	m.syncState.mu.Lock()
+	repeated := m.syncState.lastError == err.Message
+	m.syncState.lastError = err.Message
+	m.syncState.mu.Unlock()
+	if !repeated {
 		m.log.Errorf("同步本机运行模式到 Console 失败: %s", err.Message)
 	}
 }

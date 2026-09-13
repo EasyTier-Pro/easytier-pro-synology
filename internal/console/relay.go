@@ -44,7 +44,7 @@ type nodeConfigView struct {
 
 // EnrolledNetworkIDs lists the networks this machine has a node in.
 func (c *Client) EnrolledNetworkIDs(ctx context.Context) ([]string, *apperr.Error) {
-	workspaceID, aerr := c.workspaceID()
+	workspaceID, aerr := c.workspaceID(ctx)
 	if aerr != nil {
 		return nil, aerr
 	}
@@ -126,7 +126,7 @@ func (c *Client) SetNodeMode(ctx context.Context, networkID string, mode NodeMod
 	if !config.ValidUUID(networkID) {
 		return false, apperr.New(apperr.CodeInvalidNetwork)
 	}
-	workspaceID, aerr := c.workspaceID()
+	workspaceID, aerr := c.workspaceID(ctx)
 	if aerr != nil {
 		return false, aerr
 	}

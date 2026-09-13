@@ -37,6 +37,11 @@ type Status struct {
 	// to reach peers.
 	TUNCapable  bool `json:"tun_capable"`
 	BindCapable bool `json:"bind_capable"`
+	// ModeSynced reports whether the Console already holds the settings this
+	// device needs. It is false while a capability-limited device has not been
+	// able to tell the Console, which is what the interface must not claim
+	// otherwise.
+	ModeSynced bool `json:"mode_synced"`
 }
 
 // Status reports the current runtime state.
@@ -60,6 +65,7 @@ func (m *Manager) Status() (Status, *apperr.Error) {
 		InstallDir:           m.paths.RuntimeDir(),
 		TUNCapable:           coreInstalled && tunCapable(coreBinary),
 		BindCapable:          coreInstalled && bindCapable(coreBinary),
+		ModeSynced:           m.ModeSynced(),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

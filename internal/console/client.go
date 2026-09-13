@@ -312,17 +312,6 @@ func decodeJSON(payload []byte, target any) *apperr.Error {
 }
 
 // workspaceID returns the active workspace, which every network call needs.
-func (c *Client) workspaceID() (string, *apperr.Error) {
-	settings, err := c.store.Settings()
-	if err != nil {
-		return "", apperr.New(apperr.CodeStateUnavailable)
-	}
-	if !config.ValidUUID(settings.ActiveWorkspaceID) {
-		return "", apperr.New(apperr.CodeNoWorkspace)
-	}
-	return settings.ActiveWorkspaceID, nil
-}
-
 func tenantPath(workspaceID, suffix string) string {
 	return fmt.Sprintf("/api/v1/tenants/%s%s", workspaceID, suffix)
 }

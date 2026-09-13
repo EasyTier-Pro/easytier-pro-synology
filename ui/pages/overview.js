@@ -451,6 +451,15 @@ function bindNotice(status) {
 	if (!status.core_installed || status.bind_capable) {
 		return null;
 	}
+	if (!status.mode_synced) {
+		// The setting lives on the Console, and writing it needs a Console
+		// session. Saying it was handled when it was not would send the
+		// operator looking in the wrong place for why the node has no peers.
+		return banner(h('div', {}, [
+			h('p', { text: '本机缺少 CAP_NET_RAW：EasyTier 默认会把出站连接绑定到网卡，而 DSM 不允许套件持有该权限，因此本机目前无法连接任何 peer（节点列表为空）。' }),
+			h('p', { text: '这个设置需要写入 EasyTier Console，而写入需要 Console 登录。请先「登录 EasyTier Console」，本机会自动在 Console 上关闭该绑定。' }),
+		]), 'error');
+	}
 	return banner(h('div', {}, [
 		h('p', { text: '本机以「不绑定网卡」方式连接：DSM 不允许套件持有 CAP_NET_RAW，而 EasyTier 默认会把出站连接绑定到网卡。' }),
 		h('p', { class: 'muted', text: '守护进程已自动在 EasyTier Console 上为本机节点关闭该绑定，无需任何手工操作，连接与节点访问都正常。' }),
@@ -474,11 +483,13 @@ function tunNotice(status) {
 			h('br'),
 			'唯一的区别是本机自身没有虚拟网卡，因此 NAS 上的程序无法主动访问网络里的其它节点。',
 		]),
-		h('p', {}, [
-			'已自动在 EasyTier Console 上把本机节点设为「无 TUN 模式」，这样下发的配置才与本机权限一致。',
-			h('br'),
-			'授予权限后本机会自动取消该设置，恢复完整模式。',
-		]),
+		status.mode_synced
+			? h('p', {}, [
+				'已自动在 EasyTier Console 上把本机节点设为「无 TUN 模式」，这样下发的配置才与本机权限一致。',
+				h('br'),
+				'授予权限后本机会自动取消该设置，恢复完整模式。',
+			])
+			: h('p', { text: '把该设置写入 EasyTier Console 需要 Console 登录；请先登录，本机会自动完成设置。' }),
 		h('details', {}, [
 			h('summary', { text: '想让 NAS 本身拥有虚拟网卡（可选）' }),
 			h('p', { class: 'muted', text: '默认不需要这样做。只有当你希望 NAS 上的程序能主动访问其它节点时，才需要由管理员授权（SSH，或用「控制面板 → 任务计划」新建以 root 运行的脚本任务），然后重新启动套件：' }),

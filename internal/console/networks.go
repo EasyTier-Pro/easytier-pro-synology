@@ -34,7 +34,7 @@ type LeaveResult struct {
 // Networks lists the networks of the active workspace and reports whether this
 // machine is enrolled yet.
 func (c *Client) Networks(ctx context.Context) (NetworksResult, *apperr.Error) {
-	workspaceID, aerr := c.workspaceID()
+	workspaceID, aerr := c.workspaceID(ctx)
 	if aerr != nil {
 		return NetworksResult{}, aerr
 	}
@@ -68,7 +68,7 @@ func (c *Client) NetworkNodes(ctx context.Context, networkID string) (NodesResul
 	if !config.ValidUUID(networkID) {
 		return NodesResult{}, apperr.New(apperr.CodeInvalidNetwork)
 	}
-	workspaceID, aerr := c.workspaceID()
+	workspaceID, aerr := c.workspaceID(ctx)
 	if aerr != nil {
 		return NodesResult{}, aerr
 	}
@@ -102,7 +102,7 @@ func (c *Client) NetworkJoin(ctx context.Context, networkID string) (json.RawMes
 	if !config.ValidUUID(networkID) {
 		return nil, apperr.New(apperr.CodeInvalidNetwork)
 	}
-	workspaceID, aerr := c.workspaceID()
+	workspaceID, aerr := c.workspaceID(ctx)
 	if aerr != nil {
 		return nil, aerr
 	}
@@ -149,7 +149,7 @@ func (c *Client) NetworkLeave(ctx context.Context, networkID string) (LeaveResul
 	if !config.ValidUUID(networkID) {
 		return LeaveResult{}, apperr.New(apperr.CodeInvalidNetwork)
 	}
-	workspaceID, aerr := c.workspaceID()
+	workspaceID, aerr := c.workspaceID(ctx)
 	if aerr != nil {
 		return LeaveResult{}, aerr
 	}
