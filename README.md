@@ -29,9 +29,10 @@
 
 ### 界面地址
 
-- 页面：`/webman/3rdparty/easytier-pro/index.html`（DSM 主菜单入口）
-- 本机 API：`127.0.0.1:15890`，由 DSM nginx 反向代理到
-  `/webman/3rdparty/easytier-pro/api/`，浏览器与 API 同源。
+- 页面：`/3rdparty/easytier-pro/index.html`（DSM 主菜单入口，套件注入的 nginx 配置提供），
+  `/webman/3rdparty/easytier-pro/index.html` 同样可访问。
+- 本机 API：`127.0.0.1:15890`，由 DSM nginx 反向代理到 `/3rdparty/easytier-pro/api/`
+  与 `/webman/3rdparty/easytier-pro/api/`，浏览器与 API 同源。
 
 ## 安全模型
 
@@ -51,8 +52,14 @@
 - 不包含 Console 服务端、relay、access、可观测性等云侧组件。
 - 不管理 DSM 防火墙：虚拟网卡对局域网或反向的访问，请在
   「控制面板 → 安全性 → 防火墙」中自行放行（OpenWrt 版插件的 zone 逻辑没有移植）。
-- 套件以 root 运行：`easytier-core` 创建 TUN 设备需要 `CAP_NET_ADMIN`，而运行时二进制是
-  首次连接时下载到套件数据目录的，无法通过 DSM 的 `tool.capabilities` 提前声明。
+- DSM 7 强制第三方套件降权运行：`conf/privilege` 只允许 `defaults.run-as = "package"`，
+  且不接受 `ctrl-script`、`executable` 与 `tool.capabilities`，因此守护进程以套件专用用户
+  `easytier-pro` 运行、不带任何 capability；本机 API 只监听回环，由 nginx 转发前完成
+  DSM 会话校验。
+- TUN 设备需要 `CAP_NET_ADMIN`，而运行时二进制是首次连接时下载到套件数据目录的，无法由 DSM
+  提前授予。需要本机提供虚拟网卡时，由管理员一次性授予该文件能力：
+  `sudo setcap cap_net_admin,cap_net_raw+ep /volume*/@appdata/easytier-pro/runtime/easytier-core`
+  （每次重新下载运行时后需要再执行一次）。
 - 界面只覆盖本机相关操作，完整的 Console 管理能力请打开 Console 网页。
 
 ## 开发
