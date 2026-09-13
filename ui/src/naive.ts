@@ -3,16 +3,10 @@
 // they are created once here instead of being injected through providers.
 
 import { createDiscreteApi, darkTheme, type ConfigProviderProps } from 'naive-ui'
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
+import { isDark } from './theme'
 
-const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)')
-
-/** Whether the surrounding system asks for a dark interface. */
-export const isDark = ref(Boolean(prefersDark?.matches))
-
-prefersDark?.addEventListener('change', (event) => {
-	isDark.value = event.matches
-})
+export { isDark, setThemeMode, themeMode } from './theme'
 
 const configProviderProps = computed<ConfigProviderProps>(() => ({
 	theme: isDark.value ? darkTheme : null,

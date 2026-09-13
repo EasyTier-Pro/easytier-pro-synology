@@ -1,12 +1,20 @@
 <script setup lang="ts">
-import { NConfigProvider, NLayout, darkTheme, zhCN, dateZhCN } from 'naive-ui'
+import { NConfigProvider, NLayout, NSelect, darkTheme, zhCN, dateZhCN } from 'naive-ui'
 import { computed } from 'vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import { routes } from './router'
-import { isDark } from './naive'
+import { isDark, setThemeMode, themeMode, type ThemeMode } from './theme'
 
 const route = useRoute()
 const theme = computed(() => (isDark.value ? darkTheme : null))
+
+// The appearance control: following the system stays the default, and choosing
+// one is remembered for the next visit.
+const themeOptions: Array<{ label: string; value: ThemeMode }> = [
+	{ label: '跟随系统', value: 'system' },
+	{ label: '浅色', value: 'light' },
+	{ label: '深色', value: 'dark' },
+]
 
 // The navigation entries come from the route table so a new page only has to be
 // declared once.
@@ -35,6 +43,14 @@ const navItems = routes
 						:class="{ 'is-active': route.name === item.name }"
 					>{{ item.label }}</RouterLink>
 				</nav>
+				<n-select
+					:value="themeMode"
+					:options="themeOptions"
+					size="small"
+					class="etp-theme-select"
+					aria-label="界面配色"
+					@update:value="setThemeMode"
+				/>
 			</header>
 			<main class="etp-main">
 				<RouterView />

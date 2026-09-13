@@ -4,9 +4,77 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EasyTier Pro</title>
+<script>
+	// The interface follows the system appearance until the operator picks one.
+	// This runs before the first paint, so the page is never briefly the wrong
+	// colour while the bundle is still on its way: without it a dark interface
+	// opens on a white canvas and the cards appear out of it one by one.
+	(function () {
+		try {
+			var mode = localStorage.getItem('easytier-pro-theme');
+			if (mode === 'light' || mode === 'dark') {
+				document.documentElement.setAttribute('data-theme', mode);
+			}
+		} catch (error) {
+			// Storage unavailable: the system preference is used.
+		}
+	})();
+</script>
+<style>
+	/* The page background is painted from here rather than from the bundle, and is
+	   kept in step afterwards because the interface sets data-theme when the
+	   operator changes the appearance. */
+	:root {
+		color-scheme: light;
+		background: #f2f3f5;
+	}
+
+	:root[data-theme='light'] {
+		color-scheme: light;
+		background: #f2f3f5;
+	}
+
+	:root[data-theme='dark'] {
+		color-scheme: dark;
+		background: #101014;
+	}
+
+	@media (prefers-color-scheme: dark) {
+		:root:not([data-theme='light']) {
+			color-scheme: dark;
+			background: #101014;
+		}
+	}
+
+	html,
+	body {
+		height: 100%;
+	}
+
+	body {
+		margin: 0;
+		font-family: -apple-system, "Segoe UI", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+	}
+
+	/* Fixed, so it centres over the viewport without taking part in the layout the
+	   interface builds once it mounts. */
+	.etp-boot {
+		position: fixed;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 13px;
+		letter-spacing: 0.02em;
+		opacity: 0.5;
+	}
+</style>
 </head>
 <body>
-<div id="app"></div>
+<div id="app">
+	<!-- Replaced as soon as the interface mounts. -->
+	<p class="etp-boot">正在加载界面…</p>
+</div>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
