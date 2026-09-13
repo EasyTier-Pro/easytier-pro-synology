@@ -53,6 +53,11 @@ func (p Paths) LogsDir() string       { return filepath.Join(p.PkgVar, "logs") }
 func (p Paths) RunDir() string        { return filepath.Join(p.PkgVar, "run") }
 func (p Paths) OperationsDir() string { return filepath.Join(p.StateDir(), "operations") }
 
+// ArchiveCacheDir holds the runtime archives that were already downloaded and
+// verified. It sits beside the runtime because both belong to the package
+// variable tree, which survives package upgrades.
+func (p Paths) ArchiveCacheDir() string { return filepath.Join(p.PkgVar, "cache") }
+
 func (p Paths) SettingsFile() string       { return filepath.Join(p.StateDir(), "settings.json") }
 func (p Paths) MachineIDFile() string      { return filepath.Join(p.StateDir(), "machine-id") }
 func (p Paths) BootstrapTokenFile() string { return filepath.Join(p.SecretsDir(), "bootstrap-token") }
@@ -78,7 +83,7 @@ func (p Paths) UIDir() string        { return filepath.Join(p.PkgDest, "ui") }
 
 // EnsureDirs creates the state tree with owner-only permissions.
 func (p Paths) EnsureDirs() error {
-	for _, dir := range []string{p.RuntimeDir(), p.StateDir(), p.SecretsDir(), p.LogsDir(), p.RunDir(), p.OperationsDir()} {
+	for _, dir := range []string{p.RuntimeDir(), p.StateDir(), p.SecretsDir(), p.LogsDir(), p.RunDir(), p.OperationsDir(), p.ArchiveCacheDir()} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("create %s: %w", dir, err)
 		}

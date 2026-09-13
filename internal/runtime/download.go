@@ -360,7 +360,16 @@ func (m *Manager) prepareCandidate(ctx context.Context, source downloadSource, s
 	if declaredSize > 0 && declaredSize > limit {
 		return candidate{}, errors.New("the runtime archive exceeds the safe download limit")
 	}
-	if err := m.fetchArchive(ctx, source.url, archive, limit); err != nil {
+	// An archive of exactly this artifact that was downloaded and verified
+	// before is reused rather than fetched again, which is what makes a retry
+	// after a failed install cheap. It goes through the same verification below
+	// as a fresh download, so reusing it trusts nothing.
+	if cached, ok := m.cachedArchive(assetArch, version, checksum, limit, declaredSize); ok {
+		archive = cached
+		m.log.Printf("使用本机缓存的运行时归档，跳过下载")
+		m.writeDownloadStatus(StateRunning, PhaseDownload, source.downloadPercent,
+			"正在使用本机缓存的运行时归档。", version)
+	} else if err := m.fetchArchive(ctx, source.url, archive, limit); err != nil {
 		return candidate{}, err
 	}
 	size, err := fileSize(archive)
@@ -393,6 +402,9 @@ func (m *Manager) prepareCandidate(ctx context.Context, source downloadSource, s
 		}
 		m.log.Printf("Console 未提供 %s 的校验和，改用本地校验", version)
 	}
+	// The archive is authentic, so it is worth keeping for a retry. Only an
+	// archive whose checksum was published can be cached.
+	m.storeArchiveInCache(archive, assetArch, version, checksum)
 	members, err := m.archiveMembers(archive)
 	if err != nil {
 		return candidate{}, err
