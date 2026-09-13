@@ -1,10 +1,17 @@
 #!/bin/sh
 # Refuse to install without enough room for the runtime and its downloads.
+#
+# DSM 7 runs every script of a non-Synology package as the package user and only
+# exports SYNOPKG_PKGDEST_VOL before the package is unpacked, so this script
+# never writes to the package directories; DSM creates them itself.
 
 MIN_FREE_KB=204800
-SCRIPTS_DIR="$(dirname "$SYNOPKG_PKGDEST")/scripts"
 
-target_volume="$(printf '%s' "$SYNOPKG_PKGVAR" | awk -F/ 'NF > 1 { print "/" $2 }')"
+target_volume="${SYNOPKG_PKGDEST_VOL:-}"
+if [ -z "$target_volume" ] && [ -n "$SYNOPKG_PKGDEST" ]; then
+	target_volume="$(printf '%s' "$SYNOPKG_PKGDEST" | awk -F/ 'NF > 1 { print "/" $2 }')"
+fi
+
 available_kb="$(df -Pk "$target_volume" 2>/dev/null | awk 'NR == 2 { print $4 }')"
 case "$available_kb" in
 	''|*[!0-9]*) available_kb=0 ;;
@@ -14,8 +21,5 @@ if [ "$available_kb" -lt "$MIN_FREE_KB" ]; then
 	echo "可用空间不足：需要 200 MB，当前 $((available_kb / 1024)) MB。" >&2
 	exit 1
 fi
-
-mkdir -p "$SYNOPKG_PKGVAR/logs" "$SYNOPKG_PKGVAR/run" || exit 1
-chmod 700 "$SYNOPKG_PKGVAR" 2>/dev/null || true
 
 exit 0

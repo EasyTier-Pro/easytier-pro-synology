@@ -66,8 +66,14 @@ for spk in "$@"; do
 
 	jq -e . "$work/conf/privilege" >/dev/null || fail "$spk: conf/privilege is not valid JSON"
 	jq -e . "$work/conf/resource" >/dev/null || fail "$spk: conf/resource is not valid JSON"
-	jq -e '."defaults"."run-as" == "root"' "$work/conf/privilege" >/dev/null \
-		|| fail "$spk: conf/privilege does not run as root"
+	jq -e '."defaults"."run-as" == "package"' "$work/conf/privilege" >/dev/null \
+		|| fail "$spk: conf/privilege defaults must run as package (DSM rejects root defaults)"
+	jq -e 'has("ctrl-script") | not' "$work/conf/privilege" >/dev/null \
+		|| fail "$spk: conf/privilege must not declare ctrl-script (DSM rejects it for unsigned packages)"
+	jq -e 'has("executable") | not' "$work/conf/privilege" >/dev/null \
+		|| fail "$spk: conf/privilege must not declare executable (DSM rejects it for unsigned packages)"
+	jq -e '[."tool"[]? | select(has("capabilities"))] | length == 0' "$work/conf/privilege" >/dev/null \
+		|| fail "$spk: conf/privilege must not request tool capabilities (DSM rejects it for unsigned packages)"
 	jq -e '."web-config"."nginx-static-config"' "$work/conf/resource" >/dev/null \
 		|| fail "$spk: conf/resource is missing the nginx-static-config worker"
 
