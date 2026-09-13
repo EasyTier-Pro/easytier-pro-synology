@@ -82,8 +82,8 @@ curl 登录得到的会话可以正常返回用户名）。真实会话只能在
 | B9 | ⚠️ | 重启 DSM 后套件自动启动、守护进程与 API 恢复（日志显示开机即启动）；`running` 需先连接 Console 并下载运行时 |
 | B10 | ✅ | 升级到更高版本后 `state/upgrade-marker` 与 `state/machine-id` 均保留（修复了升级误删状态的问题） |
 | B11 | ✅ | 卸载后 `/volume1/@appdata/easytier-pro/` 为空，nginx 注入链接被移除，守护进程退出 |
-| B12 | ✅（已实现，待接 Console 复测） | 默认以 `--no-tun` 中继模式运行：节点仍出现在 Console，但本机没有虚拟 IP；授予 `cap_net_admin` 后重启连接切换为完整模式，TUN 网卡出现在 `local-summary.interfaces`。实测证据：无特权时 core 报 `tun device error ... Operation not permitted`，以 root 运行同一二进制则 `tun device ready dev="etp0"` |
-| B13 | ✅（本地 e2e 已验证，DSM 侧同 B12 待复测） | core 退出后由守护进程按退避重启（本地 e2e 实测 2 秒内拉起）；重启逻辑与是否中继模式无关，中继模式下 core 同样常驻 |
+| B12 | ✅（已实现，待接 Console 复测） | 无 TUN 模式：本机仍有虚拟 IP，可被其它节点访问、可做子网路由与中继，只是本机自身没有虚拟网卡（`local-summary.interfaces` 为空）；授予 `cap_net_admin` 后重启连接切换为完整模式，虚拟网卡出现。实测证据：无特权时 core 报 `tun device error ... Operation not permitted`，以 root 运行同一二进制则 `tun device ready dev="etp0"` |
+| B13 | ✅（本地 e2e 已验证，DSM 侧同 B12 待复测） | core 退出后由守护进程按退避重启（本地 e2e 实测 2 秒内拉起）；重启逻辑与运行模式无关，无 TUN 模式下 core 同样常驻 |
 | B14 | ✅ | 「打开 Console」按钮按地址推导规则在新标签页打开（界面逻辑已在浏览器中验证） |
 | B15 | ✅ | 断开/重连逻辑同 A6，已在本地 e2e 环境验证 |
 
@@ -113,7 +113,8 @@ DSM 不允许第三方套件以 root 运行，也无从获得 capability，因�
 
 1. **默认（未授权）**：守护进程把本机在 Console 上的节点设为「无 TUN 模式」
    （`PUT /api/v1/tenants/{ws}/nodes/{id}/config`，在节点 override 中写入 `no_tun: true`），
-   本机作为中继/子网代理节点加入网络，但没有虚拟 IP。概览页显示「运行模式：中继模式（无虚拟 IP）」
+   本机作为正常的网络成员加入：仍有虚拟 IP，可被其它节点访问，也可做子网路由与中继，只是本机
+   自身没有虚拟网卡（`local-summary.interfaces` 为空）。概览页显示「运行模式：无 TUN 模式（用户态转发）」
    并给出一次性授权命令。命令按当前套件数据目录生成，界面提供「复制命令」按钮。
    DSM 的 `/tmp` 为 `noexec`，命令必须指向运行时目录。
 2. **管理员授权后**：capability 在每次启动时重新检查；一旦检测到，守护进程会**自动删除**该

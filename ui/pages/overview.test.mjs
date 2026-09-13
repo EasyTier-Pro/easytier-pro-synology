@@ -4,7 +4,7 @@
 // out nor change workspace.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { install, findByText } from '../lib/testdom.mjs';
+import { install, findByText, texts } from '../lib/testdom.mjs';
 
 install();
 
@@ -70,4 +70,22 @@ test('workspace setup offers logout', async () => {
 	});
 	assert.ok(findByText(root, '完成本机设置'), 'expected the workspace step');
 	assert.ok(findByText(root, '退出 Console 登录'), 'no way to log out from the workspace step');
+});
+
+// The no-TUN mode keeps the node in the network: it still has a virtual IP, it
+// can be reached by peers, and it still routes subnets and relays. Only the
+// host itself loses the virtual interface. The interface once described it as
+// "no virtual IP, relay only", which understated what the mode can do.
+test('no-TUN notice describes reachability, not isolation', async () => {
+	// The runtime is installed but the service is stopped, so the notice about
+	// the missing virtual interface is shown.
+	const root = await renderWith({
+		'api/status': { ...connected, core_installed: true, cli_installed: true, tun_capable: false },
+	});
+	const notice = texts(root).join('\n');
+	assert.match(notice, /无 TUN 模式/);
+	assert.match(notice, /其它节点可以主动访问本机/, 'the notice must say the node stays reachable');
+	assert.match(notice, /子网路由和中继/, 'the notice must say routing and relay still work');
+	assert.doesNotMatch(notice, /没有自己的虚拟 IP/, 'the node does have a virtual IP');
+	assert.doesNotMatch(notice, /没有虚拟 IP/, 'the node does have a virtual IP');
 });

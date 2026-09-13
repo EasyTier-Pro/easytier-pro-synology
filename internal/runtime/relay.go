@@ -64,9 +64,9 @@ func (m *Manager) SyncRelayMode(ctx context.Context) *apperr.Error {
 		}
 		if changed {
 			if relay {
-				m.log.Printf("本机没有创建虚拟网卡的权限，已把网络 %s 上的本机节点设为中继模式", networkID)
+				m.log.Printf("本机没有创建虚拟网卡的权限，已把网络 %s 上的本机节点设为无 TUN 模式", networkID)
 			} else {
-				m.log.Printf("本机已获得创建虚拟网卡的权限，已取消网络 %s 上本机节点的中继模式", networkID)
+				m.log.Printf("本机已获得创建虚拟网卡的权限，已取消网络 %s 上本机节点的无 TUN 模式", networkID)
 			}
 		}
 	}

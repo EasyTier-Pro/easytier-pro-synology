@@ -452,7 +452,13 @@ function tunNotice(status) {
 	}
 	const command = tunGrantCommand(status);
 	return banner(h('div', {}, [
-		h('p', { text: '本机当前以「中继模式」运行：DSM 不允许套件以 root 运行，套件因此没有创建虚拟网卡的权限，本机没有自己的虚拟 IP，但仍会加入网络并为其转发流量。' }),
+		h('p', { text: '本机当前以「无 TUN 模式」运行：DSM 不允许套件以 root 运行，套件因此拿不到创建虚拟网卡的权限。' }),
+		h('p', {}, [
+			'这不会让本机退出网络：本机仍会获得虚拟 IP，其它节点可以主动访问本机（也能经本机虚拟 IP 访问本机上的服务），',
+			'并且照常可以做子网路由和中继。',
+			h('br'),
+			'唯一的区别是本机自身没有虚拟网卡，因此 NAS 上的程序无法主动访问网络里的其它节点。',
+		]),
 		h('p', {}, [
 			'已自动在 EasyTier Console 上把本机节点设为「无 TUN 模式」，这样下发的配置才与本机权限一致。',
 			h('br'),
@@ -520,10 +526,10 @@ function renderRunning(status, auth, summary, networks, { reset, loggedIn }) {
 	const summaryCard = card('连接状态', [
 		tunNotice(status),
 		detailList([
-			[ '运行模式', status.tun_capable ? '完整模式' : '中继模式（无虚拟 IP）' ],
+			[ '运行模式', status.tun_capable ? '完整模式（本机有虚拟网卡）' : '无 TUN 模式（用户态转发）' ],
 			[ '本机虚拟 IP', ipv4 ? h('span', { class: 'mono', text: ipv4 }) : '' ],
 			[ 'Peer 数', String(peers) ],
-			[ 'TUN 设备', interfaces.length ? interfaces.join(', ') : '' ],
+			[ '虚拟网卡', interfaces.length ? interfaces.join(', ') : (status.tun_capable ? '' : '无（无 TUN 模式）') ],
 			[ 'Core 版本', valueOrDash(status.core_version) ],
 			[ 'CLI 版本', valueOrDash(status.cli_version) ],
 		]),
