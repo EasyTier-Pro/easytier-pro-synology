@@ -282,9 +282,19 @@ export async function render() {
 /* 1. 不可用：状态读取失败。 */
 function renderUnavailable(error, reset) {
 	if (needsRelogin(error)) {
-		return card('需要重新登录', [
-			banner('本页面需要有效的 DSM 登录会话，请重新登录 DSM 后再试。', 'warning'),
-			h('div', { class: 'row' }, [ button('重试', { variant: 'primary', onclick: reset }) ]),
+		return card('需要有效的 DSM 登录会话', [
+			banner(h('div', {}, [
+				h('p', { text: '本应用没有拿到有效的 DSM 登录会话，因此无法读取本机状态。' }),
+				h('p', { text: '常见原因有两个：DSM 登录其实没有成功；或者登录 DSM 用的地址与本应用的地址不同——DSM 的会话按地址区分，在别的地址登录不会让本应用生效。' }),
+				h('p', { class: 'muted', text: `本应用使用的地址：${window.location.origin}` }),
+			]), 'warning'),
+			h('div', { class: 'row' }, [
+				button('重新登录 DSM', {
+					variant: 'primary',
+					onclick: () => { window.open('/webman/index.cgi', '_blank'); },
+				}),
+				button('已确认登录，重试', { onclick: reset }),
+			]),
 		]);
 	}
 	return card('暂时无法读取本机状态', [
