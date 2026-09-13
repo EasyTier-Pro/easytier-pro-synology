@@ -15,7 +15,9 @@ package dsmenv
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -36,6 +38,11 @@ import (
 // with an error for everyone else.
 const adminAPI = "/webapi/entry.cgi?api=SYNO.Core.User&version=1&method=list"
 
+// synoTokenHeader carries the CSRF token DSM issues with a login session.
+// DSM rejects a Web API call that presents a session cookie without it, even
+// though the session itself is valid, so the browser has to supply it.
+const synoTokenHeader = "X-Syno-Token"
+
 const (
 	cacheTTL       = 30 * time.Second
 	requestTimeout = 10 * time.Second
@@ -53,6 +60,9 @@ const (
 	// dsmCodeNoPermission is returned when the session is valid but the account
 	// may not call an administrative API.
 	dsmCodeNoPermission = 105
+	// dsmCodeSessionInvalid is returned when the session is missing or the
+	// request did not carry the token that belongs to it.
+	dsmCodeSessionInvalid = 119
 )
 
 // defaultEndpoints are tried, in order, when the reverse proxy did not report
@@ -127,6 +137,25 @@ func (a *Authenticator) logErrorf(format string, args ...any) {
 	}
 }
 
+// fingerprintOf describes the session cookies of a rejected request without
+// disclosing them. The values are credentials and never reach the log, but the
+// fingerprint makes it possible to tell whether the browser is sending a
+// session this appliance still knows about.
+func fingerprintOf(request *http.Request) string {
+	values := make([]string, 0, 2)
+	for _, cookie := range request.Cookies() {
+		if cookie.Name != "id" && cookie.Name != "_SSID" {
+			continue
+		}
+		sum := sha256.Sum256([]byte(cookie.Value))
+		values = append(values, cookie.Name+"="+hex.EncodeToString(sum[:6]))
+	}
+	if len(values) == 0 {
+		return "（未收到 id / _SSID Cookie）"
+	}
+	return "（" + strings.Join(values, " ") + "）"
+}
+
 // Bypassed reports whether DSM session checks are disabled for development.
 func (a *Authenticator) Bypassed() bool { return a.bypass }
 
@@ -139,11 +168,14 @@ func (a *Authenticator) Authenticate(ctx context.Context, request *http.Request)
 	if cookie == "" {
 		return "", apperr.New(apperr.CodeDSMAuthRequired)
 	}
-	if result, cached := a.cached(cookie); cached {
+	// The token is part of the credential: the same cookie with a different
+	// token is a different question.
+	key := cookie + "\x00" + request.Header.Get(synoTokenHeader)
+	if result, cached := a.cached(key); cached {
 		return a.result(result)
 	}
-	result := a.probe(ctx, request, cookie)
-	a.store(cookie, result)
+	result := a.probe(ctx, request, key)
+	a.store(key, result)
 	return a.result(result)
 }
 
@@ -159,9 +191,10 @@ func (a *Authenticator) result(result outcome) (string, *apperr.Error) {
 }
 
 // probe asks DSM whether the session may call an administrative API.
-func (a *Authenticator) probe(ctx context.Context, request *http.Request, cookie string) outcome {
+func (a *Authenticator) probe(ctx context.Context, request *http.Request, key string) outcome {
+	cookie, token, _ := strings.Cut(key, "\x00")
 	for _, endpoint := range a.endpoints(request) {
-		result, err := a.ask(ctx, endpoint, cookie)
+		result, err := a.ask(ctx, endpoint, cookie, token)
 		if err != nil {
 			// Nothing that speaks the DSM Web API is listening here.
 			continue
@@ -172,7 +205,11 @@ func (a *Authenticator) probe(ctx context.Context, request *http.Request, cookie
 			return outcomeForbidden
 		}
 		if !result.success {
-			a.logf("DSM 会话校验未通过（错误码 %d）", result.code)
+			reason := "DSM 会话校验未通过"
+			if token == "" && result.code == dsmCodeSessionInvalid {
+				reason = "请求没有携带 DSM 会话令牌（X-Syno-Token），已按未登录处理"
+			}
+			a.logf("%s（错误码 %d）%s", reason, result.code, fingerprintOf(request))
 			return outcomeUnauthenticated
 		}
 		return outcomeAuthenticated
@@ -217,13 +254,16 @@ type probeResult struct {
 
 // call performs one probe. A non-nil error means the endpoint could not be
 // reached or did not answer with a DSM envelope, so another one may be tried.
-func (a *Authenticator) ask(ctx context.Context, endpoint, cookie string) (probeResult, error) {
+func (a *Authenticator) ask(ctx context.Context, endpoint, cookie, token string) (probeResult, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+adminAPI, nil)
 	if err != nil {
 		return probeResult{}, err
 	}
 	request.Header.Set("Cookie", cookie)
 	request.Header.Set("Accept", "application/json")
+	if token != "" {
+		request.Header.Set(synoTokenHeader, token)
+	}
 	response, err := a.client.Do(request)
 	if err != nil {
 		return probeResult{}, err

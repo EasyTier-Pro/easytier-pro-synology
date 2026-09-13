@@ -1,5 +1,7 @@
 // Local API client. Every request goes to the same origin as this page, so the
-// browser attaches the DSM session cookie automatically.
+// browser attaches the DSM session cookie automatically. DSM also requires the
+// CSRF token it issues with the login session, which lives in the desktop
+// shell rather than in a cookie, so it has to be read and forwarded by hand.
 
 const errorMessages = {
 	access_denied: 'Console 拒绝了本次操作。',
@@ -64,12 +66,45 @@ export function needsRelogin(error) {
 	return error instanceof ApiError && (error.code === 'dsm_auth_required' || error.code === 'dsm_auth_forbidden');
 }
 
+/**
+ * synoToken reads the DSM session token from the surrounding desktop shell.
+ *
+ * The application window is opened by DSM and shares its origin, so the shell
+ * that holds the token is reachable through one of the window references. A
+ * page opened directly has no shell and therefore no token; such a request is
+ * rejected by DSM, which the interface reports as an expired session.
+ */
+function synoToken() {
+	const scopes = [ window, window.parent, window.top, window.opener ];
+	for (const scope of scopes) {
+		try {
+			const session = scope && scope.SYNO && scope.SYNO.SDS && scope.SYNO.SDS.Session;
+			if (!session) {
+				continue;
+			}
+			const token = typeof session.getSynoToken === 'function'
+				? session.getSynoToken()
+				: session.SynoToken;
+			if (token) {
+				return token;
+			}
+		} catch (error) {
+			// Cross-origin window: not the DSM shell.
+		}
+	}
+	return '';
+}
+
 async function request(path, options = {}) {
 	const init = {
 		method: options.method || 'GET',
 		headers: { 'X-Easytier-Request': '1' },
 		credentials: 'same-origin',
 	};
+	const token = synoToken();
+	if (token) {
+		init.headers['X-Syno-Token'] = token;
+	}
 	if (options.body !== undefined) {
 		init.headers['Content-Type'] = 'application/json';
 		init.body = JSON.stringify(options.body);

@@ -125,3 +125,40 @@ func TestDevelopmentBypassSkipsDSM(t *testing.T) {
 		t.Fatalf("Authenticate() = %q, want %q", user, devUser)
 	}
 }
+
+// DSM rejects a valid session that arrives without its token, so the token has
+// to reach the probe.
+func TestAuthenticateForwardsTheSessionToken(t *testing.T) {
+	var seen string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Get("X-Syno-Token")
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	t.Cleanup(server.Close)
+	parsed, _ := url.Parse(server.URL)
+	request := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	request.Header.Set("X-DSM-Scheme", parsed.Scheme)
+	request.Header.Set("X-DSM-Port", parsed.Port())
+	request.Header.Set("Cookie", "id=session")
+	request.Header.Set("X-Syno-Token", "token-value")
+	auth := New(nil)
+	if _, aerr := auth.Authenticate(request.Context(), request); aerr != nil {
+		t.Fatalf("Authenticate() = %v, want success", aerr)
+	}
+	if seen != "token-value" {
+		t.Fatalf("the probe sent X-Syno-Token %q, want %q", seen, "token-value")
+	}
+}
+
+// The token is part of the credential, so it must take part in the cache key.
+func TestAuthenticateDoesNotShareCacheAcrossTokens(t *testing.T) {
+	auth, request, calls := newTestAuthenticator(t, `{"error":{"code":119},"success":false}`, http.StatusOK)
+	if _, aerr := auth.Authenticate(request.Context(), request); aerr == nil {
+		t.Fatal("Authenticate() = nil, want a rejection")
+	}
+	request.Header.Set("X-Syno-Token", "another-token")
+	_, _ = auth.Authenticate(request.Context(), request)
+	if got := atomic.LoadInt32(calls); got != 2 {
+		t.Fatalf("DSM was asked %d times, want 2 (one per token)", got)
+	}
+}
