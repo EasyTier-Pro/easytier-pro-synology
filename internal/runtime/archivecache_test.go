@@ -32,128 +32,138 @@ func runtimeArchiveFor(t *testing.T, assetArch, version string) string {
 	return archive
 }
 
-func TestArchiveCacheNameNeedsAChecksum(t *testing.T) {
-	if name := archiveCacheName("x86_64", "v2.6.4", ""); name != "" {
-		t.Fatalf("an unauthenticated artifact was cacheable as %q", name)
+// shaOf is the published-checksum stand-in for a test artifact.
+func shaOf(t *testing.T, path string) string {
+	t.Helper()
+	sum, err := fileSHA256(path)
+	if err != nil {
+		t.Fatalf("hash %s: %v", path, err)
 	}
-	if name := archiveCacheName("x86_64", "v2.6.4", "   "); name != "" {
-		t.Fatalf("a blank checksum was cacheable as %q", name)
-	}
-	name := archiveCacheName("aarch64", "v2.6.4", "AB12")
-	for _, part := range []string{"aarch64", "v2.6.4", "ab12"} {
-		if !strings.Contains(name, part) {
-			t.Fatalf("cache name %q is missing %q", name, part)
-		}
-	}
+	return sum
 }
 
-// A stored archive is what makes a retry cheap, so it has to be found again.
+func entryNames(entries []os.DirEntry) []string {
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
+}
+
+// readLogFile returns the daemon log so a test can assert what an operator sees.
+func readLogFile(t *testing.T, manager *Manager) string {
+	t.Helper()
+	data, err := os.ReadFile(manager.paths.DaemonLogFile())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		t.Fatalf("read daemon log: %v", err)
+	}
+	return string(data)
+}
+
+// A retained archive is what makes a retry cheap, so it has to be found again
+// under the name of the artifact it belongs to.
 func TestCachedArchiveIsReused(t *testing.T) {
 	manager := newTestManager(t)
 	archive := runtimeArchive(t, "v2.6.4")
-	checksum, err := fileSHA256(archive)
-	if err != nil {
-		t.Fatalf("hash archive: %v", err)
-	}
 	size, err := fileSize(archive)
 	if err != nil {
 		t.Fatalf("size archive: %v", err)
 	}
 
-	manager.storeVerifiedArchive(archive, "x86_64", "v2.6.4", checksum)
+	stored := manager.storeArchive(archive, "x86_64", "v2.6.4")
+	if stored != filepath.Join(manager.paths.ArchiveCacheDir(), archiveCacheName("x86_64", "v2.6.4")) {
+		t.Fatalf("stored archive path = %q", stored)
+	}
 
-	cached, ok := manager.cachedArchive("x86_64", "v2.6.4", checksum, size)
+	cached, ok := manager.cachedArchive("x86_64", "v2.6.4", size)
 	if !ok {
-		t.Fatal("the archive that was just cached was not found")
+		t.Fatal("the archive that was just retained was not found")
 	}
-	if got, err := fileSHA256(cached); err != nil || got != checksum {
-		t.Fatalf("cached archive hash = %q, %v; want %q", got, err, checksum)
+	if cached != stored {
+		t.Fatalf("cached path = %q, want %q", cached, stored)
 	}
 }
 
-// Reuse is only safe because the checksum is checked again. A damaged entry has
-// to cost a download, not a failed update.
-func TestCachedArchiveDiscardsDamage(t *testing.T) {
-	manager := newTestManager(t)
-	archive := runtimeArchive(t, "v2.6.4")
-	checksum, err := fileSHA256(archive)
-	if err != nil {
-		t.Fatalf("hash archive: %v", err)
-	}
-	size, err := fileSize(archive)
-	if err != nil {
-		t.Fatalf("size archive: %v", err)
-	}
-	manager.storeVerifiedArchive(archive, "x86_64", "v2.6.4", checksum)
-
-	name := archiveCacheName("x86_64", "v2.6.4", checksum)
-	path := filepath.Join(manager.paths.ArchiveCacheDir(), name)
-	if err := os.WriteFile(path, []byte("not the archive"), 0o600); err != nil {
-		t.Fatalf("damage cache entry: %v", err)
-	}
-
-	if _, ok := manager.cachedArchive("x86_64", "v2.6.4", checksum, 0); ok {
-		t.Fatal("a damaged cache entry was offered for reuse")
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("the damaged entry was kept: %v", err)
-	}
-	_ = size
-}
-
-// The published size is part of the artifact's identity, so an entry that
-// disagrees with it is not the artifact being installed.
+// The release metadata describes one artifact, so a retained file that does not
+// match its size is not that artifact and must cost a download rather than be
+// offered.
 func TestCachedArchiveRejectsDeclaredSizeMismatch(t *testing.T) {
 	manager := newTestManager(t)
 	archive := runtimeArchive(t, "v2.6.4")
-	checksum, err := fileSHA256(archive)
-	if err != nil {
-		t.Fatalf("hash archive: %v", err)
-	}
 	size, err := fileSize(archive)
 	if err != nil {
 		t.Fatalf("size archive: %v", err)
 	}
-	manager.storeVerifiedArchive(archive, "x86_64", "v2.6.4", checksum)
+	manager.storeArchive(archive, "x86_64", "v2.6.4")
 
-	if _, ok := manager.cachedArchive("x86_64", "v2.6.4", checksum, size+1); ok {
-		t.Fatal("an entry whose size disagrees with the release was offered for reuse")
+	if _, ok := manager.cachedArchive("x86_64", "v2.6.4", size+1); ok {
+		t.Fatal("an archive whose size disagrees with the release was offered")
+	}
+	entries, err := os.ReadDir(manager.paths.ArchiveCacheDir())
+	if err != nil {
+		t.Fatalf("read cache dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("the mismatching entry was kept: %v", entryNames(entries))
 	}
 }
 
-// The cache is bounded to one download: a retry only needs the artifact it is
-// retrying, and the package volume may be small.
-func TestStoreArchiveInCacheKeepsOneEntry(t *testing.T) {
+// A release that publishes no size still lets its archive be reused.
+func TestCachedArchiveAcceptsUnknownSize(t *testing.T) {
 	manager := newTestManager(t)
-	first := runtimeArchive(t, "v2.6.4")
-	second := runtimeArchive(t, "v2.6.5")
-	firstSum, _ := fileSHA256(first)
-	secondSum, _ := fileSHA256(second)
+	manager.storeArchive(runtimeArchive(t, "v2.6.4"), "x86_64", "v2.6.4")
 
-	manager.storeVerifiedArchive(first, "x86_64", "v2.6.4", firstSum)
-	manager.storeVerifiedArchive(second, "x86_64", "v2.6.5", secondSum)
+	if _, ok := manager.cachedArchive("x86_64", "v2.6.4", 0); !ok {
+		t.Fatal("a retained archive was refused when the release published no size")
+	}
+}
+
+// The retained archive exists for the retry that may follow a failed install,
+// and it is released once the runtime is in place.
+func TestDiscardCachedArchiveReleasesTheEntry(t *testing.T) {
+	manager := newTestManager(t)
+	manager.storeArchive(runtimeArchive(t, "v2.6.4"), "x86_64", "v2.6.4")
+
+	manager.discardCachedArchive("x86_64", "v2.6.4")
 
 	entries, err := os.ReadDir(manager.paths.ArchiveCacheDir())
 	if err != nil {
 		t.Fatalf("read cache dir: %v", err)
 	}
-	if len(entries) != 1 {
-		names := make([]string, 0, len(entries))
-		for _, entry := range entries {
-			names = append(names, entry.Name())
-		}
-		t.Fatalf("cache holds %d entries %v, want 1", len(entries), names)
+	if len(entries) != 0 {
+		t.Fatalf("the installed archive was kept: %v", entryNames(entries))
 	}
-	if entries[0].Name() != archiveCacheName("x86_64", "v2.6.5", secondSum) {
-		t.Fatalf("cache kept %q instead of the newest entry", entries[0].Name())
+	if _, ok := manager.cachedArchive("x86_64", "v2.6.4", 0); ok {
+		t.Fatal("a discarded archive is still offered")
+	}
+}
+
+// Only the artifact being installed is kept: leftovers of an interrupted
+// attempt on another architecture must not accumulate.
+func TestPruneArchiveCacheKeepsOnlyTheCurrentArtifact(t *testing.T) {
+	manager := newTestManager(t)
+	manager.storeArchive(runtimeArchiveFor(t, "armv7", "v2.6.4"), "armv7", "v2.6.4")
+	current := manager.storeArchive(runtimeArchiveFor(t, "armv7hf", "v2.6.4"), "armv7hf", "v2.6.4")
+
+	manager.pruneArchiveCache(filepath.Base(current))
+
+	entries, err := os.ReadDir(manager.paths.ArchiveCacheDir())
+	if err != nil {
+		t.Fatalf("read cache dir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(current) {
+		t.Fatalf("cache holds %v, want only %q", entryNames(entries), filepath.Base(current))
 	}
 }
 
 // The point of the whole feature: a retry of the same artifact must not touch
 // the network. The download source is served by a handler that always fails and
-// counts its requests, so a successful candidate can only have come from the
-// cache.
-func TestPrepareCandidateUsesCachedArchiveWithoutDownloading(t *testing.T) {
+// counts its requests, so an accepted candidate can only have come from the
+// retained copy.
+func TestPrepareCandidateUsesRetainedArchiveWithoutDownloading(t *testing.T) {
 	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&requests, 1)
@@ -163,113 +173,62 @@ func TestPrepareCandidateUsesCachedArchiveWithoutDownloading(t *testing.T) {
 
 	version := "v2.6.4"
 	archive := runtimeArchive(t, version)
-	checksum, err := fileSHA256(archive)
-	if err != nil {
-		t.Fatalf("hash archive: %v", err)
-	}
 	size, err := fileSize(archive)
 	if err != nil {
 		t.Fatalf("size archive: %v", err)
 	}
+	// A published checksum is what lets this source be plain HTTP; the cache
+	// itself never needs one.
+	checksum := shaOf(t, archive)
 	source := downloadSource{name: "Gitee", url: server.URL + "/asset.zip"}
 
-	// Without the cache the same source fails, which is what makes the cached
-	// run below meaningful rather than a no-op.
+	// Without a retained copy the same source fails, which is what makes the
+	// retained run below meaningful rather than a no-op.
 	fresh := newTestManager(t)
 	if _, err := fresh.prepareCandidate(context.Background(), source, t.TempDir(),
 		"x86_64", version, checksum, size); err == nil {
-		t.Fatal("the failing source produced a candidate without a cached archive")
+		t.Fatal("the failing source produced a candidate with nothing retained")
 	}
 	if atomic.LoadInt32(&requests) == 0 {
 		t.Fatal("the control run never reached the network")
 	}
 
-	cached := newTestManager(t)
-	cached.storeVerifiedArchive(archive, "x86_64", version, checksum)
+	retained := newTestManager(t)
+	retained.storeArchive(archive, "x86_64", version)
 	before := atomic.LoadInt32(&requests)
 
-	candidate, err := cached.prepareCandidate(context.Background(), source, t.TempDir(),
+	candidate, err := retained.prepareCandidate(context.Background(), source, t.TempDir(),
 		"x86_64", version, checksum, size)
 	if err != nil {
-		t.Fatalf("prepareCandidate from cache: %v", err)
+		t.Fatalf("prepareCandidate from the retained copy: %v", err)
 	}
 	if got := atomic.LoadInt32(&requests); got != before {
-		t.Fatalf("the cached run made %d network requests", got-before)
+		t.Fatalf("the retained run made %d network requests", got-before)
 	}
 	if !binaryMatchesVersion(context.Background(), candidate.core, version) {
-		t.Fatal("the cached archive did not produce a usable core binary")
+		t.Fatal("the retained archive did not produce a usable core binary")
 	}
 	if !binaryMatchesVersion(context.Background(), candidate.cli, version) {
-		t.Fatal("the cached archive did not produce a usable cli binary")
+		t.Fatal("the retained archive did not produce a usable cli binary")
 	}
 }
 
-// Nothing may be cached for an artifact whose checksum the Console did not
-// publish, because that path only has the weaker local check.
-func TestStoreArchiveInCacheNeedsAChecksum(t *testing.T) {
-	manager := newTestManager(t)
-	archive := runtimeArchive(t, "v2.6.4")
-
-	manager.storeVerifiedArchive(archive, "x86_64", "v2.6.4", "")
-
-	entries, err := os.ReadDir(manager.paths.ArchiveCacheDir())
-	if err != nil {
-		t.Fatalf("read cache dir: %v", err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("an unauthenticated archive was cached as %v", entries[0].Name())
-	}
-}
-
-// Without a checksum the client only accepts HTTPS, so an unaudited artifact
-// cannot enter the cache through the download path either.
-func TestPrepareCandidateRefusesPlainHTTPWithoutAChecksum(t *testing.T) {
+// End to end through the real pipeline: the first attempt downloads and retains
+// what it accepted, and the next attempt for the same artifact does not download
+// it again. The saving is reported, because an operator would otherwise have no
+// way to tell a fast retry apart from a download that silently did nothing.
+func TestPrepareCandidateRetainsWhatItAcceptedAndReusesIt(t *testing.T) {
 	version := "v2.6.4"
 	archive := runtimeArchive(t, version)
 	body, err := os.ReadFile(archive)
 	if err != nil {
 		t.Fatalf("read archive: %v", err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/zip")
-		_, _ = w.Write(body)
-	}))
-	t.Cleanup(server.Close)
-
-	manager := newTestManager(t)
-	_, err = manager.prepareCandidate(context.Background(),
-		downloadSource{name: "Gitee", url: server.URL + "/asset.zip"},
-		t.TempDir(), "x86_64", version, "", 0)
-	if err == nil || !strings.Contains(err.Error(), "plain HTTP") {
-		t.Fatalf("prepareCandidate error = %v, want the plain-HTTP refusal", err)
-	}
-	entries, readErr := os.ReadDir(manager.paths.ArchiveCacheDir())
-	if readErr != nil {
-		t.Fatalf("read cache dir: %v", readErr)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("an unauthenticated archive was cached as %v", entries[0].Name())
-	}
-}
-
-// The whole point, end to end through the real pipeline: the first attempt
-// downloads and caches what it verified, and the next attempt for the same
-// artifact does not download it again.
-func TestPrepareCandidateCachesWhatItVerifiedAndReusesIt(t *testing.T) {
-	version := "v2.6.4"
-	archive := runtimeArchive(t, version)
-	body, err := os.ReadFile(archive)
-	if err != nil {
-		t.Fatalf("read archive: %v", err)
-	}
-	checksum, err := fileSHA256(archive)
-	if err != nil {
-		t.Fatalf("hash archive: %v", err)
 	}
 	size, err := fileSize(archive)
 	if err != nil {
 		t.Fatalf("size archive: %v", err)
 	}
+	checksum := shaOf(t, archive)
 
 	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -289,7 +248,6 @@ func TestPrepareCandidateCachesWhatItVerifiedAndReusesIt(t *testing.T) {
 		t.Fatalf("first attempt made %d downloads, want 1", got)
 	}
 
-	// A retry, exactly as a second attempt after a failed install would run it.
 	logBefore := readLogFile(t, manager)
 	if _, err := manager.prepareCandidate(context.Background(), source, t.TempDir(),
 		"x86_64", version, checksum, size); err != nil {
@@ -298,88 +256,143 @@ func TestPrepareCandidateCachesWhatItVerifiedAndReusesIt(t *testing.T) {
 	if got := atomic.LoadInt32(&requests); got != 1 {
 		t.Fatalf("the retry downloaded the archive again (%d downloads)", got)
 	}
-	// The saving has to be visible: an operator who sees a fast retry otherwise
-	// has no way to tell it apart from a download that silently did nothing.
 	if appended := strings.TrimPrefix(readLogFile(t, manager), logBefore); !strings.Contains(appended, "缓存") {
-		t.Fatalf("the retry logged %q, which does not report the cached archive", appended)
+		t.Fatalf("the retry logged %q, which does not report the retained archive", appended)
 	}
 }
 
-// readLogFile returns the daemon log so a test can assert what an operator sees.
-func readLogFile(t *testing.T, manager *Manager) string {
-	t.Helper()
-	data, err := os.ReadFile(manager.paths.DaemonLogFile())
+// A retained copy this host will not accept must cost a download, not fail the
+// update forever: without dropping it, every later attempt would fail the same
+// way.
+func TestDamagedRetainedArchiveIsReplacedByADownload(t *testing.T) {
+	version := "v2.6.4"
+	archive := runtimeArchive(t, version)
+	body, err := os.ReadFile(archive)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return ""
-		}
-		t.Fatalf("read daemon log: %v", err)
+		t.Fatalf("read archive: %v", err)
 	}
-	return string(data)
+
+	var requests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+
+	manager := newTestManager(t)
+	// A retained file of the expected size that is not a usable archive.
+	damaged := filepath.Join(manager.paths.ArchiveCacheDir(), archiveCacheName("x86_64", version))
+	if err := os.WriteFile(damaged, []byte(strings.Repeat("x", len(body))), 0o600); err != nil {
+		t.Fatalf("write damaged entry: %v", err)
+	}
+	size, err := fileSize(damaged)
+	if err != nil {
+		t.Fatalf("size damaged entry: %v", err)
+	}
+
+	candidate, err := manager.prepareCandidate(context.Background(),
+		downloadSource{name: "Gitee", url: server.URL + "/asset.zip"},
+		t.TempDir(), "x86_64", version, shaOf(t, archive), size)
+	if err != nil {
+		t.Fatalf("a damaged retained copy was not replaced by a download: %v", err)
+	}
+	if got := atomic.LoadInt32(&requests); got != 1 {
+		t.Fatalf("downloads = %d, want the damaged copy replaced exactly once", got)
+	}
+	if !binaryMatchesVersion(context.Background(), candidate.core, version) {
+		t.Fatal("the replacement archive did not produce a usable core binary")
+	}
+	if log := readLogFile(t, manager); !strings.Contains(log, "不可用") {
+		t.Fatalf("the replacement was not reported to the operator: %q", log)
+	}
+}
+
+// A candidate this host turns out to reject must not reach the cache, or it
+// would replace the archive that does work: armv7 devices prefer armv7hf, and
+// that build cannot run on a soft-float host, so this is the normal arm case.
+func TestRejectedCandidateDoesNotReplaceTheUsableArchive(t *testing.T) {
+	manager := newTestManager(t)
+	cached := manager.storeArchive(runtimeArchiveFor(t, "armv7", "v2.6.4"), "armv7", "v2.6.4")
+
+	// The preferred archive downloads and unpacks, but its binaries report a
+	// different version - how a build that cannot run on this host fails.
+	rejectedBody, err := os.ReadFile(runtimeArchiveFor(t, "armv7hf", "v2.6.3"))
+	if err != nil {
+		t.Fatalf("read rejected archive: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(rejectedBody)
+	}))
+	t.Cleanup(server.Close)
+
+	if _, err := manager.prepareCandidate(context.Background(),
+		downloadSource{name: "Gitee", url: server.URL + "/asset.zip"},
+		t.TempDir(), "armv7hf", "v2.6.4", "", int64(len(rejectedBody))); err == nil {
+		t.Fatal("an archive whose binaries report the wrong version was accepted")
+	}
+
+	if _, err := os.Stat(cached); err != nil {
+		t.Fatalf("the usable retained archive was replaced by a rejected candidate: %v", err)
+	}
 }
 
 // The cache is consulted before the free-space download limit. That limit only
-// decides whether a download may start, so applying it first would let a cached
-// archive that is now too large for the free space block the very update it was
-// kept for - and the lookup that evicts a bad entry is exactly what would be
-// skipped. The limit is passed in so the test can pin that ordering.
-func TestResolveArchivePrefersTheCacheOverTheDownloadLimit(t *testing.T) {
+// decides whether a download may start, so applying it first would let an
+// archive too large for the current free space block the very update it was kept
+// for - and the lookup that discards a bad entry is what would be skipped.
+func TestResolveArchivePrefersTheRetainedCopyOverTheDownloadLimit(t *testing.T) {
 	version := "v2.6.4"
 	archive := runtimeArchive(t, version)
-	checksum, err := fileSHA256(archive)
-	if err != nil {
-		t.Fatalf("hash archive: %v", err)
-	}
 	size, err := fileSize(archive)
 	if err != nil {
 		t.Fatalf("size archive: %v", err)
 	}
 
-	// A limit far below the archive size: exactly the tight-volume case.
+	// A limit far below the archive size: the tight-volume case.
 	const tightLimit = 1
 
 	manager := newTestManager(t)
-	manager.storeVerifiedArchive(archive, "x86_64", version, checksum)
+	cached := manager.storeArchive(archive, "x86_64", version)
 
 	source := downloadSource{name: "Gitee", url: "https://invalid.example/asset.zip"}
-	resolved, err := manager.resolveArchive(context.Background(), source, t.TempDir(),
-		"x86_64", version, checksum, size, tightLimit)
+	resolved, retained, err := manager.resolveArchive(context.Background(), source, t.TempDir(),
+		"x86_64", version, size, tightLimit)
 	if err != nil {
-		t.Fatalf("a cached archive was refused because of the download limit: %v", err)
+		t.Fatalf("a retained archive was refused because of the download limit: %v", err)
 	}
-	if got, hashErr := fileSHA256(resolved); hashErr != nil || got != checksum {
-		t.Fatalf("resolved archive hash = %q, %v; want the cached archive", got, hashErr)
+	if !retained || resolved != cached {
+		t.Fatalf("resolveArchive = %q, retained=%t; want the retained copy", resolved, retained)
 	}
 
-	// Without a cache the same limit still refuses the download, so the check
-	// was not simply removed.
+	// Without one, the same limit still refuses the download, so the check was
+	// not simply removed.
 	fresh := newTestManager(t)
-	if _, err := fresh.resolveArchive(context.Background(), source, t.TempDir(),
-		"x86_64", version, checksum, size, tightLimit); err == nil {
+	if _, _, err := fresh.resolveArchive(context.Background(), source, t.TempDir(),
+		"x86_64", version, size, tightLimit); err == nil {
 		t.Fatal("an oversized download was started despite the limit")
 	}
 }
 
-// The verified archive is moved into the cache, not copied, so peak disk usage
+// The accepted archive is moved into the cache, not copied, so peak disk usage
 // stays at one archive: on a tight volume a second copy is what makes an
 // otherwise viable download fail during extraction.
-func TestStoreVerifiedArchiveMovesInsteadOfCopying(t *testing.T) {
+func TestStoreArchiveMovesInsteadOfCopying(t *testing.T) {
 	manager := newTestManager(t)
-	archive := runtimeArchive(t, "v2.6.4")
-	checksum, err := fileSHA256(archive)
-	if err != nil {
-		t.Fatalf("hash archive: %v", err)
-	}
 	stage := t.TempDir()
-	staged := filepath.Join(stage, "asset.zip")
-	if err := os.Rename(archive, staged); err != nil {
+	staged := filepath.Join(stage, "x86_64", "asset.zip")
+	if err := os.MkdirAll(filepath.Dir(staged), 0o700); err != nil {
+		t.Fatalf("create staging dir: %v", err)
+	}
+	if err := os.Rename(runtimeArchive(t, "v2.6.4"), staged); err != nil {
 		t.Fatalf("stage archive: %v", err)
 	}
 
-	stored := manager.storeVerifiedArchive(staged, "x86_64", "v2.6.4", checksum)
+	stored := manager.storeArchive(staged, "x86_64", "v2.6.4")
 
-	if stored != filepath.Join(manager.paths.ArchiveCacheDir(), archiveCacheName("x86_64", "v2.6.4", checksum)) {
-		t.Fatalf("stored archive path = %q", stored)
+	if stored == staged {
+		t.Fatal("the archive was reported at its staging path, so it was not moved")
 	}
 	if _, err := os.Stat(staged); !os.IsNotExist(err) {
 		t.Fatalf("the archive was left in the staging directory: %v", err)
@@ -390,14 +403,10 @@ func TestStoreVerifiedArchiveMovesInsteadOfCopying(t *testing.T) {
 }
 
 // A cache that cannot be written must not fail the update: the archive in hand
-// has already been verified, so the cost is only a future download.
-func TestStoreVerifiedArchiveKeepsTheArchiveWhenItCannotCache(t *testing.T) {
+// has already been accepted, so the cost is only a future download.
+func TestStoreArchiveKeepsTheArchiveWhenItCannotCache(t *testing.T) {
 	manager := newTestManager(t)
 	archive := runtimeArchive(t, "v2.6.4")
-	checksum, err := fileSHA256(archive)
-	if err != nil {
-		t.Fatalf("hash archive: %v", err)
-	}
 	// Make the move impossible by replacing the cache directory with a file.
 	if err := os.RemoveAll(manager.paths.ArchiveCacheDir()); err != nil {
 		t.Fatalf("remove cache dir: %v", err)
@@ -406,63 +415,106 @@ func TestStoreVerifiedArchiveKeepsTheArchiveWhenItCannotCache(t *testing.T) {
 		t.Fatalf("block cache dir: %v", err)
 	}
 
-	if got := manager.storeVerifiedArchive(archive, "x86_64", "v2.6.4", checksum); got != archive {
-		t.Fatalf("storeVerifiedArchive = %q, want the original path so the update can continue", got)
+	if got := manager.storeArchive(archive, "x86_64", "v2.6.4"); got != archive {
+		t.Fatalf("storeArchive = %q, want the original path so the update can continue", got)
 	}
 	if _, err := os.Stat(archive); err != nil {
-		t.Fatalf("the verified archive was lost: %v", err)
+		t.Fatalf("the accepted archive was lost: %v", err)
 	}
 }
 
-// A candidate this host turns out to reject must not reach the cache. The cache
-// holds one entry, so storing a rejected archive would evict the archive that
-// does work: armv7 devices prefer armv7hf, and that build cannot run on a
-// soft-float host, so this is the normal arm case rather than an edge case.
-func TestRejectedCandidateDoesNotEvictTheUsableCachedArchive(t *testing.T) {
-	// The usable archive is already cached from an earlier failed run.
-	usable := runtimeArchiveFor(t, "armv7", "v2.6.4")
-	usableSum, err := fileSHA256(usable)
-	if err != nil {
-		t.Fatalf("hash usable archive: %v", err)
-	}
+// Validation must stand on its own without a published checksum, because the
+// Console does not publish one: a retained file that is not a usable archive is
+// rejected by the member check before anything is extracted.
+func TestBuildCandidateRejectsAnArchiveWithoutTheRuntimeMembers(t *testing.T) {
 	manager := newTestManager(t)
-	cached := manager.storeVerifiedArchive(usable, "armv7", "v2.6.4", usableSum)
+	stage := t.TempDir()
+	archive := filepath.Join(stage, "asset.zip")
+	writeArchive(t, archive, map[string]string{"unrelated.txt": "not a runtime"})
 
-	// The preferred archive downloads and verifies, but its binaries report a
-	// different version - how a build that cannot run on this host fails.
-	rejected := runtimeArchiveFor(t, "armv7hf", "v2.6.3")
-	rejectedBody, err := os.ReadFile(rejected)
-	if err != nil {
-		t.Fatalf("read rejected archive: %v", err)
+	// An HTTPS source that is never contacted: this call reads only the archive.
+	source := downloadSource{name: "Gitee", url: "https://invalid.example/asset.zip"}
+	_, err := manager.buildCandidate(context.Background(), source, archive, stage,
+		"x86_64", "v2.6.4", "", 0)
+	if err == nil {
+		t.Fatal("an archive without the runtime members was accepted")
 	}
-	rejectedSum, err := fileSHA256(rejected)
-	if err != nil {
-		t.Fatalf("hash rejected archive: %v", err)
+	if !strings.Contains(err.Error(), "easytier-core") {
+		t.Fatalf("rejection reason = %v, want the missing members", err)
 	}
-	rejectedSize, err := fileSize(rejected)
+}
+
+// A retained copy that no longer matches the release size is not something to
+// install, and the report has to say so rather than fail quietly.
+func TestCachedArchiveReportsASizeMismatch(t *testing.T) {
+	manager := newTestManager(t)
+	archive := runtimeArchive(t, "v2.6.4")
+	size, err := fileSize(archive)
 	if err != nil {
-		t.Fatalf("size rejected archive: %v", err)
+		t.Fatalf("size archive: %v", err)
 	}
+	manager.storeArchive(archive, "x86_64", "v2.6.4")
+
+	before := readLogFile(t, manager)
+	if _, ok := manager.cachedArchive("x86_64", "v2.6.4", size+1); ok {
+		t.Fatal("the mismatching entry was offered")
+	}
+	if appended := strings.TrimPrefix(readLogFile(t, manager), before); !strings.Contains(appended, "不一致") {
+		t.Fatalf("the mismatch was not reported: %q", appended)
+	}
+}
+
+// The retained archive is released once the runtime is installed, so it holds
+// disk space only for the window between a download and the update consuming it.
+func TestSuccessfulInstallReleasesTheRetainedArchive(t *testing.T) {
+	version := "v2.6.4"
+	archive := runtimeArchive(t, version)
+	body, err := os.ReadFile(archive)
+	if err != nil {
+		t.Fatalf("read archive: %v", err)
+	}
+	size, err := fileSize(archive)
+	if err != nil {
+		t.Fatalf("size archive: %v", err)
+	}
+	checksum := shaOf(t, archive)
+
+	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
 		w.Header().Set("Content-Type", "application/zip")
-		_, _ = w.Write(rejectedBody)
+		_, _ = w.Write(body)
 	}))
 	t.Cleanup(server.Close)
 
-	if _, err := manager.prepareCandidate(context.Background(),
-		downloadSource{name: "Gitee", url: server.URL + "/asset.zip"},
-		t.TempDir(), "armv7hf", "v2.6.4", rejectedSum, rejectedSize); err == nil {
-		t.Fatal("an archive whose binaries report the wrong version was accepted")
+	manager := newTestManager(t)
+	source := downloadSource{name: "Gitee", url: server.URL + "/asset.zip"}
+
+	// Download and install the way downloadRun does.
+	stage := filepath.Join(manager.paths.RuntimeDir(), ".stage.test")
+	if err := os.MkdirAll(stage, 0o700); err != nil {
+		t.Fatalf("create stage: %v", err)
+	}
+	defer os.RemoveAll(stage)
+	candidate, err := manager.prepareCandidate(context.Background(), source, stage,
+		"x86_64", version, checksum, size)
+	if err != nil {
+		t.Fatalf("prepareCandidate: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(manager.paths.ArchiveCacheDir(), archiveCacheName("x86_64", version))); err != nil {
+		t.Fatalf("the accepted archive was not retained for a retry: %v", err)
 	}
 
-	if _, err := os.Stat(cached); err != nil {
-		t.Fatalf("the usable cached archive was evicted by a rejected candidate: %v", err)
+	if !manager.installRuntime(context.Background(), candidate.core, candidate.cli, version, source) {
+		t.Fatal("installRuntime did not report the runtime as installed")
 	}
+	manager.discardCachedArchive("x86_64", version)
+
 	entries, err := os.ReadDir(manager.paths.ArchiveCacheDir())
 	if err != nil {
 		t.Fatalf("read cache dir: %v", err)
 	}
-	if len(entries) != 1 || entries[0].Name() != filepath.Base(cached) {
-		t.Fatalf("cache holds %d entries after a rejected candidate, want only %q", len(entries), filepath.Base(cached))
+	if len(entries) != 0 {
+		t.Fatalf("the archive was kept after a successful install: %v", entryNames(entries))
 	}
 }

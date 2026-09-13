@@ -37,8 +37,9 @@
 ## 安全模型
 
 - 所有状态位于套件数据目录 `/volume*/@appdata/easytier-pro`，权限 `0700`，
-  升级套件不会丢失，卸载时由 `postuninst` 清理。其中 `cache/` 保存最近一次校验通过的
-  运行时压缩包（约 25 MB）：更新失败后重试时直接复用，不再重复下载。
+  升级套件不会丢失，卸载时由 `postuninst` 清理。其中 `cache/` 暂存最近一次下载的运行时
+  压缩包（约 25 MB）：更新在下载之后失败时，重试直接复用它而不重新下载；安装成功后立即
+  删除，所以它只在"下载完成"到"更新结束"之间占用空间。
 - `state/secrets/bootstrap-token`（设备注册令牌）、`state/secrets/console-session.json`
   （Console access/refresh token）、`state/machine-id` 权限均为 `0600`。
 - 令牌只保存在 NAS 上，不返回浏览器；界面只读取白名单字段。

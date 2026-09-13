@@ -309,40 +309,45 @@ func (m *Manager) downloadRun(ctx context.Context, requested string) {
 				m.log.Errorf("%s 下载或校验失败: %v", source.name, err)
 				continue
 			}
-			m.installRuntime(ctx, candidate.core, candidate.cli, version, source)
+			if m.installRuntime(ctx, candidate.core, candidate.cli, version, source) {
+				// The archive has been installed, so the retained copy has
+				// served its purpose: keeping it would hold disk space for a
+				// runtime that is already in place.
+				m.discardCachedArchive(assetArch, version)
+			}
 			return
 		}
 	}
 	m.failDownload(PhaseValidate, 78, "Gitee 与 GitHub 均下载或校验失败。", version)
 }
 
-// resolveArchive produces the archive to verify: a previously verified cache
-// entry when one exists, and a fresh download otherwise.
+// resolveArchive produces the archive to check: the retained copy of this
+// artifact when one exists, and a fresh download otherwise. It reports whether
+// the archive came from the cache.
 //
 // The cache is consulted before the download limit on purpose. That limit only
-// decides whether a download may start, and a cached archive needs none, so
-// asking it first would let an entry too large for the current free space block
-// the very update it was kept for - and the lookup that evicts a bad entry is
-// exactly what applying the limit first would skip. Either way the archive is
-// verified afterwards, so a cache hit trusts nothing.
-func (m *Manager) resolveArchive(ctx context.Context, source downloadSource, stage, assetArch, version, checksum string, declaredSize, limit int64) (string, error) {
-	archive := filepath.Join(stage, assetArch, fmt.Sprintf("easytier-linux-%s-%s.zip", assetArch, version))
+// decides whether a download may start, and a retained archive needs none, so
+// asking it first would let an archive too large for the current free space
+// block the very update it was kept for - and the lookup that discards a bad
+// entry is exactly what applying the limit first would skip.
+func (m *Manager) resolveArchive(ctx context.Context, source downloadSource, stage, assetArch, version string, declaredSize, limit int64) (string, bool, error) {
+	archive := filepath.Join(stage, assetArch, archiveCacheName(assetArch, version))
 	if err := os.MkdirAll(filepath.Dir(archive), 0o700); err != nil {
-		return "", err
+		return "", false, err
 	}
-	if cached, ok := m.cachedArchive(assetArch, version, checksum, declaredSize); ok {
+	if cached, ok := m.cachedArchive(assetArch, version, declaredSize); ok {
 		m.log.Printf("使用本机缓存的运行时归档，跳过下载")
 		m.writeDownloadStatus(StateRunning, PhaseDownload, source.downloadPercent,
 			"正在使用本机缓存的运行时归档。", version)
-		return cached, nil
+		return cached, true, nil
 	}
 	if declaredSize > 0 && declaredSize > limit {
-		return "", errors.New("the runtime archive exceeds the safe download limit")
+		return "", false, errors.New("the runtime archive exceeds the safe download limit")
 	}
 	if err := m.fetchArchive(ctx, source.url, archive, limit); err != nil {
-		return "", err
+		return "", false, err
 	}
-	return archive, nil
+	return archive, false, nil
 }
 
 // candidate is a validated, extracted runtime pair.
@@ -375,15 +380,36 @@ func releaseArtifact(release console.Release, assetArch string) (string, int64, 
 }
 
 // prepareCandidate downloads and validates one archive.
+// prepareCandidate produces a runtime pair this host accepts, from the retained
+// archive when there is one and from a fresh download otherwise.
+//
+// A retained archive that fails the checks below is discarded and downloaded
+// again, in this same call. Without that, one damaged copy would fail every
+// later attempt in exactly the same way and the update could never proceed.
 func (m *Manager) prepareCandidate(ctx context.Context, source downloadSource, stage, assetArch, version, checksum string, declaredSize int64) (candidate, error) {
 	limit, err := m.archiveLimit()
 	if err != nil {
 		return candidate{}, err
 	}
-	archive, err := m.resolveArchive(ctx, source, stage, assetArch, version, checksum, declaredSize, limit)
+	archive, retained, err := m.resolveArchive(ctx, source, stage, assetArch, version, declaredSize, limit)
 	if err != nil {
 		return candidate{}, err
 	}
+	result, err := m.buildCandidate(ctx, source, archive, stage, assetArch, version, checksum, declaredSize)
+	if err == nil || !retained {
+		return result, err
+	}
+	m.log.Errorf("本机缓存的运行时归档不可用，将重新下载: %v", err)
+	os.Remove(archive)
+	archive, _, err = m.resolveArchive(ctx, source, stage, assetArch, version, declaredSize, limit)
+	if err != nil {
+		return candidate{}, err
+	}
+	return m.buildCandidate(ctx, source, archive, stage, assetArch, version, checksum, declaredSize)
+}
+
+// buildCandidate checks one archive and extracts the runtime pair from it.
+func (m *Manager) buildCandidate(ctx context.Context, source downloadSource, archive, stage, assetArch, version, checksum string, declaredSize int64) (candidate, error) {
 	size, err := fileSize(archive)
 	if err != nil {
 		return candidate{}, err
@@ -448,24 +474,25 @@ func (m *Manager) prepareCandidate(ctx context.Context, source downloadSource, s
 	if !binaryMatchesVersion(ctx, cliPath, version) {
 		return candidate{}, errors.New("easytier-cli does not report the expected version")
 	}
-	// Kept only now that this host accepted the archive. Caching it earlier
-	// would store an archive this device rejects and, because the cache holds a
-	// single entry, evict the archive that does work: on armv7 the preferred
-	// armv7hf build cannot run on a soft-float host, so a retry would drop the
-	// usable armv7 archive and download both again.
-	m.storeVerifiedArchive(archive, assetArch, version, checksum)
+	// Kept only now that this host accepted the archive, so a build this device
+	// rejects - the armv7hf one on a soft-float host, for instance - never
+	// replaces the archive that does work.
+	archive = m.storeArchive(archive, assetArch, version)
+	m.pruneArchiveCache(archiveCacheName(assetArch, version))
 	return candidate{core: corePath, cli: cliPath}, nil
 }
 
 // installRuntime swaps the validated binaries into place with rollback.
-func (m *Manager) installRuntime(ctx context.Context, corePath, cliPath, version string, source downloadSource) {
+// installRuntime swaps the validated binaries into place with rollback. It
+// reports whether the runtime is now installed.
+func (m *Manager) installRuntime(ctx context.Context, corePath, cliPath, version string, source downloadSource) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.writeDownloadStatus(StateRunning, PhaseInstall, 84, "正在安装已校验的运行时。", version)
 	if err := m.paths.EnsureDirs(); err != nil {
 		m.failDownload(PhaseInstall, 84, "无法创建运行目录。", version)
-		return
+		return false
 	}
 	transaction := updateTransaction{
 		InstallDir: m.paths.RuntimeDir(),
@@ -476,7 +503,7 @@ func (m *Manager) installRuntime(ctx context.Context, corePath, cliPath, version
 	}
 	if err := m.writeUpdateTransaction(transaction); err != nil {
 		m.failDownload(PhaseInstall, 84, "无法开始运行时更新事务。", version)
-		return
+		return false
 	}
 	rollback := func(reason string) {
 		if err := m.recoverUpdateFilesLocked(ctx); err != nil {
@@ -488,36 +515,36 @@ func (m *Manager) installRuntime(ctx context.Context, corePath, cliPath, version
 	if transaction.HadCore {
 		if err := os.Rename(m.paths.CoreBinary(), transaction.BackupCore); err != nil {
 			rollback("运行时安装失败，已恢复旧版本。")
-			return
+			return false
 		}
 	}
 	if transaction.HadCLI {
 		if err := os.Rename(m.paths.CLIbinary(), transaction.BackupCLI); err != nil {
 			rollback("运行时安装失败，已恢复旧版本。")
-			return
+			return false
 		}
 	}
 	if err := os.Rename(corePath, m.paths.CoreBinary()); err != nil {
 		rollback("运行时安装失败，已恢复旧版本。")
-		return
+		return false
 	}
 	if err := os.Rename(cliPath, m.paths.CLIbinary()); err != nil {
 		rollback("运行时安装失败，已恢复旧版本。")
-		return
+		return false
 	}
 	if err := os.Chmod(m.paths.CoreBinary(), 0o755); err != nil {
 		rollback("运行时权限设置失败，已恢复旧版本。")
-		return
+		return false
 	}
 	if err := os.Chmod(m.paths.CLIbinary(), 0o755); err != nil {
 		rollback("运行时权限设置失败，已恢复旧版本。")
-		return
+		return false
 	}
 
 	settings, err := m.store.Settings()
 	if err != nil {
 		rollback("运行时安装失败，已恢复旧版本。")
-		return
+		return false
 	}
 	if settings.Enabled && m.store.HasBootstrapToken() {
 		// The replaced binary does not inherit a file capability granted to the
@@ -531,15 +558,16 @@ func (m *Manager) installRuntime(ctx context.Context, corePath, cliPath, version
 		m.core.ResetBackoff()
 		if !m.waitForStableCore(ctx) {
 			rollback("新运行时未能启动，已恢复旧版本。")
-			return
+			return false
 		}
 	}
 	if err := m.commitUpdateTransaction(transaction); err != nil {
 		rollback("无法提交运行时更新事务，已恢复旧版本。")
-		return
+		return false
 	}
 	m.writeDownloadStatus(StateCompleted, PhaseDone, 100, "EasyTier 运行时安装完成。", version)
 	m.log.Printf("EasyTier 运行时应更新到 %s（%s）", version, source.name)
+	return true
 }
 
 // waitForStableCore waits until the management API answers repeatedly.

@@ -7,99 +7,90 @@ import (
 	"strings"
 )
 
-// The runtime archive cache keeps the last verified download on disk.
+// The runtime archive cache keeps the last downloaded runtime archive.
 //
-// Installing a runtime can fail after the archive has been downloaded and
-// verified: the new core may refuse to start, extraction may time out, or the
-// update transaction may not commit. Every retry after such a failure used to
-// download the whole archive again, which on a slow or metered link costs far
-// more than the failure itself. Keeping the verified archive turns the second
-// attempt into a local read.
+// Installing a runtime can fail after the archive has been downloaded: the new
+// core may refuse to start, extraction may time out, or the update transaction
+// may not commit. Every retry after such a failure used to download the whole
+// archive again - about 25 MB - for a failure that had nothing to do with the
+// download. Keeping the archive turns the second attempt into a local read.
 //
-// An entry is named after the checksum the Console published for it, and every
-// reuse is verified against that checksum before the archive is used, so a
-// cached artifact is exactly as trustworthy as a fresh download. That is also
-// why nothing is cached when the Console published no checksum: that case falls
-// back to a weaker local check, and reusing such a file would quietly lower the
-// bar for every later attempt.
+// An entry is named after the architecture and version it was downloaded for,
+// and it is removed once that runtime is installed, so it lives only for the
+// window between a download and the update consuming it. A release is never
+// republished under the same version, so that name identifies the artifact.
 //
-// Only one archive is kept. That bounds the directory to a single download, and
-// a retry only ever needs the artifact it is retrying.
+// The Console publishes no checksum for these archives, so a retained copy
+// cannot be authenticated the way a download over TLS is. It still passes the
+// member check and the binary version check on the way in, and a retained copy
+// that fails them is discarded so the next attempt downloads again. The cache
+// lives with the binaries it installs and is writable only by the package user,
+// so retaining it grants no access that the runtime directory does not already.
 
-// archiveCacheName is the cache file name of one artifact, or an empty string
-// when the artifact cannot be cached because no checksum authenticated it.
-func archiveCacheName(assetArch, version, checksum string) string {
-	checksum = strings.ToLower(strings.TrimSpace(checksum))
-	if checksum == "" {
-		return ""
-	}
-	return fmt.Sprintf("easytier-linux-%s-%s.%s.zip", assetArch, version, checksum)
+// archiveCacheName is the cache file name of one artifact.
+func archiveCacheName(assetArch, version string) string {
+	return fmt.Sprintf("easytier-linux-%s-%s.zip", assetArch, version)
 }
 
-// cachedArchive returns the path of a usable cached archive for one artifact.
+// cachedArchive returns the path of a retained archive for one artifact.
 //
-// An entry that no longer matches the published checksum or its declared size is
-// discarded rather than reported, so a damaged or republished artifact costs a
-// download instead of failing the update. An entry that cannot even be measured
-// is left in place: it is never accepted, it occupies no space, and the next
-// download replaces it.
-//
-// The free-space download limit is deliberately not applied here: a cached
-// archive is not downloaded, so that limit says nothing about it, and rejecting
-// it would leave the entry blocking the update impossible to evict.
-func (m *Manager) cachedArchive(assetArch, version, checksum string, declaredSize int64) (string, bool) {
-	name := archiveCacheName(assetArch, version, checksum)
-	if name == "" {
-		return "", false
-	}
-	path := filepath.Join(m.paths.ArchiveCacheDir(), name)
+// Only its size is compared against the release metadata; the contents are
+// judged by the same checks as a fresh download, in the caller. An entry whose
+// size contradicts the published artifact is not the file this release
+// describes, so it is discarded rather than offered.
+func (m *Manager) cachedArchive(assetArch, version string, declaredSize int64) (string, bool) {
+	path := filepath.Join(m.paths.ArchiveCacheDir(), archiveCacheName(assetArch, version))
 	size, err := fileSize(path)
 	if err != nil || size <= 0 {
 		return "", false
 	}
-	if declaredSize <= 0 || size == declaredSize {
-		actual, hashErr := fileSHA256(path)
-		if hashErr == nil && strings.EqualFold(actual, strings.TrimSpace(checksum)) {
-			return path, true
-		}
+	if declaredSize > 0 && size != declaredSize {
+		m.log.Printf("本机缓存的运行时归档与发布信息不一致，将重新下载")
+		os.Remove(path)
+		return "", false
 	}
-	m.log.Printf("本机缓存的运行时归档已不可用，将重新下载")
-	os.Remove(path)
-	return "", false
+	return path, true
 }
 
-// storeVerifiedArchive keeps an archive that just passed verification and
+// storeArchive keeps an accepted archive for the retry that may follow and
 // returns the path it now lives at, so the work that follows reads it there.
 //
 // The archive is moved rather than copied: the staging directory shares the
 // package volume with the cache, so a move costs no space and keeps the peak at
 // one archive instead of two - which matters precisely when the volume is tight
 // enough for the size limits to matter. Nothing here can fail the update: the
-// archive in hand is already verified, so a cache that cannot be written only
-// costs a future download.
-func (m *Manager) storeVerifiedArchive(archive, assetArch, version, checksum string) string {
-	name := archiveCacheName(assetArch, version, checksum)
-	if name == "" || filepath.Base(archive) == name {
+// archive in hand has already been checked, so a cache that cannot be written
+// only costs a future download.
+func (m *Manager) storeArchive(archive, assetArch, version string) string {
+	target := filepath.Join(m.paths.ArchiveCacheDir(), archiveCacheName(assetArch, version))
+	if archive == target {
+		// Already the retained copy, which is the case on a cache hit.
 		return archive
 	}
-	target := filepath.Join(m.paths.ArchiveCacheDir(), name)
 	if err := os.Rename(archive, target); err != nil {
 		m.log.Errorf("缓存运行时归档失败: %v", err)
 		return archive
 	}
-	m.pruneArchiveCache(name)
 	return target
 }
 
-// pruneArchiveCache keeps the named entry and removes everything else, so the
-// directory stays the size of one download.
+// discardCachedArchive drops the retained archive of one artifact. The update
+// that downloaded it has installed it, so the copy has served its purpose and
+// its space is given back.
+func (m *Manager) discardCachedArchive(assetArch, version string) {
+	os.Remove(filepath.Join(m.paths.ArchiveCacheDir(), archiveCacheName(assetArch, version)))
+}
+
+// pruneArchiveCache removes every retained archive that does not belong to the
+// given artifact. Entries are normally removed as soon as their update
+// finishes, so this only clears the leftovers of an interrupted attempt.
 func (m *Manager) pruneArchiveCache(keep string) {
 	entries, err := os.ReadDir(m.paths.ArchiveCacheDir())
 	if err != nil {
 		return
 	}
 	for _, entry := range entries {
-		if entry.Name() == keep {
+		if entry.Name() == keep || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 		os.Remove(filepath.Join(m.paths.ArchiveCacheDir(), entry.Name()))
