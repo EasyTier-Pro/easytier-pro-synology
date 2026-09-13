@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,9 @@ const (
 	adminGroup = "administrators"
 	devUser    = "dev"
 )
+
+// sessionCookie is the DSM cookie that binds a request to a login session.
+const sessionCookie = "id"
 
 // Authenticator checks DSM sessions and caches the result per cookie.
 type Authenticator struct {
@@ -80,13 +84,8 @@ func (a *Authenticator) Authenticate(ctx context.Context, request *http.Request)
 			return "", apperr.New(apperr.CodeDSMAuthRequired)
 		}
 	}
-	user, err := runCGI(ctx, authenticateCGI, cgiEnv(request))
-	if err != nil {
-		a.store(cookie, "", outcomeUnauthenticated)
-		return "", apperr.New(apperr.CodeDSMAuthRequired)
-	}
-	user = strings.TrimSpace(firstLine(user))
-	if user == "" {
+	user, ok := sessionUser(ctx, request)
+	if !ok {
 		a.store(cookie, "", outcomeUnauthenticated)
 		return "", apperr.New(apperr.CodeDSMAuthRequired)
 	}
@@ -96,6 +95,81 @@ func (a *Authenticator) Authenticate(ctx context.Context, request *http.Request)
 	}
 	a.store(cookie, user, outcomeAuthenticated)
 	return user, nil
+}
+
+// sessionUser returns the authenticated DSM user of one request, or false when
+// no session cookie of the request resolves to a user.
+func sessionUser(ctx context.Context, request *http.Request) (string, bool) {
+	for _, cookie := range cookieCandidates(request.Header.Get("Cookie")) {
+		output, err := runCGI(ctx, authenticateCGI, cgiEnv(request, cookie))
+		if err != nil {
+			continue
+		}
+		if user := strings.TrimSpace(firstLine(output)); user != "" {
+			return user, true
+		}
+	}
+	return "", false
+}
+
+// cookie is one name/value pair of a Cookie header.
+type cookie struct {
+	name  string
+	value string
+}
+
+// cookieCandidates normalizes the Cookie header for authenticate.cgi.
+//
+// authenticate.cgi resolves "id" to the LAST occurrence in the header, but a
+// browser can hold several "id" cookies at once: a stale one left behind by an
+// earlier login or by a different cookie path, next to the current one. The
+// order the browser happens to send then decides the outcome, and whenever a
+// stale value comes last every request is rejected as unauthenticated, which
+// the interface reports as an expired DSM session.
+//
+// Normalizing to exactly one "id" per attempt and trying every value removes
+// that ordering dependency. The last value is what authenticate.cgi would have
+// used, so it is attempted first.
+func cookieCandidates(header string) []string {
+	pairs := parseCookie(header)
+	identifiers := make([]string, 0, 1)
+	others := make([]string, 0, len(pairs))
+	for _, pair := range pairs {
+		if pair.name == sessionCookie {
+			if !slices.Contains(identifiers, pair.value) {
+				identifiers = append(identifiers, pair.value)
+			}
+			continue
+		}
+		others = append(others, pair.name+"="+pair.value)
+	}
+	if len(identifiers) == 0 {
+		return []string{strings.Join(others, "; ")}
+	}
+	candidates := make([]string, 0, len(identifiers))
+	for index := len(identifiers) - 1; index >= 0; index-- {
+		parts := append([]string{sessionCookie + "=" + identifiers[index]}, others...)
+		candidates = append(candidates, strings.Join(parts, "; "))
+	}
+	return candidates
+}
+
+// parseCookie splits a Cookie header into pairs, dropping empty names.
+func parseCookie(header string) []cookie {
+	parsed := make([]cookie, 0, 4)
+	for _, part := range strings.Split(header, ";") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		name, value, _ := strings.Cut(part, "=")
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		parsed = append(parsed, cookie{name: name, value: strings.TrimSpace(value)})
+	}
+	return parsed
 }
 
 func (a *Authenticator) cached(cookie string) (string, outcome, bool) {
@@ -118,8 +192,10 @@ func (a *Authenticator) store(cookie, user string, result outcome) {
 	a.cache[cookie] = entry{user: user, result: result, expires: time.Now().Add(cacheTTL)}
 }
 
-// cgiEnv synthesizes the CGI environment DSM modules expect.
-func cgiEnv(request *http.Request) []string {
+// cgiEnv synthesizes the CGI environment DSM modules expect. cookie is the
+// normalized Cookie header of this attempt, which may differ from the one the
+// browser sent (see cookieCandidates).
+func cgiEnv(request *http.Request, cookie string) []string {
 	host := request.Host
 	serverName := host
 	serverPort := "443"
@@ -155,7 +231,7 @@ func cgiEnv(request *http.Request) []string {
 		"QUERY_STRING=",
 		"REQUEST_URI=" + request.URL.RequestURI(),
 		"SCRIPT_NAME=" + request.URL.Path,
-		"HTTP_COOKIE=" + request.Header.Get("Cookie"),
+		"HTTP_COOKIE=" + cookie,
 		"HTTP_HOST=" + host,
 	}
 }

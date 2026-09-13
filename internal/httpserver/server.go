@@ -8,6 +8,7 @@ package httpserver
 import (
 	"encoding/json"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -77,11 +78,13 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) requireDSMSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if aerr := checkSameOrigin(r); aerr != nil {
+			s.logAuthorizationFailure(r, aerr)
 			writeErrorStatus(w, http.StatusForbidden, aerr)
 			return
 		}
 		user, aerr := s.auth.Authenticate(r.Context(), r)
 		if aerr != nil {
+			s.logAuthorizationFailure(r, aerr)
 			status := http.StatusUnauthorized
 			if aerr.Code == apperr.CodeDSMAuthForbidden {
 				status = http.StatusForbidden
@@ -106,11 +109,37 @@ func checkSameOrigin(r *http.Request) *apperr.Error {
 	}
 	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" {
 		parsed, err := url.Parse(origin)
-		if err != nil || parsed.Host != r.Host {
+		// nginx forwards "Host $host", which drops the port the browser used,
+		// so only the hosts themselves can be compared.
+		if err != nil || !strings.EqualFold(parsed.Hostname(), hostnameOf(r.Host)) {
 			return apperr.New(apperr.CodeInvalidRequest)
 		}
 	}
 	return nil
+}
+
+// hostnameOf strips an optional port from a Host header value.
+func hostnameOf(host string) string {
+	if name, _, err := net.SplitHostPort(host); err == nil {
+		return name
+	}
+	return host
+}
+
+// logAuthorizationFailure records why a request was rejected. Cookie values are
+// credentials and are never logged, only their names: a rejection caused by the
+// cookies a browser happens to send is otherwise impossible to diagnose.
+func (s *Server) logAuthorizationFailure(r *http.Request, aerr *apperr.Error) {
+	names := make([]string, 0, 4)
+	for _, cookie := range r.Cookies() {
+		names = append(names, cookie.Name)
+	}
+	if len(names) == 0 {
+		names = append(names, "无")
+	}
+	s.log.Printf("本机 API 拒绝 %s %s：%s（Host %q，X-Real-IP %q，Cookie %s，Origin %q）",
+		r.Method, r.URL.Path, aerr.Code, r.Host, r.Header.Get("X-Real-IP"),
+		strings.Join(names, ","), r.Header.Get("Origin"))
 }
 
 func (s *Server) staticHandler() http.Handler {
