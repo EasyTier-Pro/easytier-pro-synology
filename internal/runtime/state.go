@@ -32,7 +32,11 @@ type Status struct {
 	ConsoleURL           string `json:"console_url,omitempty"`
 	AllowInsecureConsole bool   `json:"allow_insecure_console"`
 	InstallDir           string `json:"install_dir"`
-	TUNCapable           bool   `json:"tun_capable"`
+	// TUNCapable reports whether the core can create a virtual interface;
+	// BindCapable whether it can bind sockets to an interface, which it needs
+	// to reach peers.
+	TUNCapable  bool `json:"tun_capable"`
+	BindCapable bool `json:"bind_capable"`
 }
 
 // Status reports the current runtime state.
@@ -55,6 +59,7 @@ func (m *Manager) Status() (Status, *apperr.Error) {
 		AllowInsecureConsole: settings.AllowInsecureConsole,
 		InstallDir:           m.paths.RuntimeDir(),
 		TUNCapable:           coreInstalled && tunCapable(coreBinary),
+		BindCapable:          coreInstalled && bindCapable(coreBinary),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

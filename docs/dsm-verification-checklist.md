@@ -123,14 +123,26 @@ curl 登录得到的会话可以正常返回用户名）。真实会话只能在
 DSM 不允许第三方套件以 root 运行，也无从获得 capability，因此守护进程在每次启动时检查运行时
 二进制的文件能力（`security.capability` 中的 `CAP_NET_ADMIN`），并把结果同步到 Console：
 
+0. **前提：节点要连得上 peer，必须有 `CAP_NET_RAW`**。core 的 `flags.bind_device` 默认为
+   `true`，因此它会把每个出站 socket **同时绑定到本地地址和承载该地址的网卡**
+   （`SO_BINDTODEVICE`，见 `easytier-core/src/connectivity/{manual,direct}/mod.rs` 的
+   `collect_bind_addrs`）；Linux 只允许带 `CAP_NET_RAW` 的进程这么做。缺这个能力时每次连接都报
+   `bind addr fail ... Operation not permitted`，节点**能注册、显示在线，但 peer 列表始终为空**。
+   Console 目前不暴露 `bind_device`，所以要么由管理员授予 `CAP_NET_RAW`，要么在 Console/核心里
+   增加把 `bind_device` 置为 `false` 的途径（后者才能做到真正零 capability）。
+   实测：授予 `cap_net_raw+ep` 后同一节点立即连上 5 个 peer。
+
 1. **默认（未授权）**：守护进程把本机在 Console 上的节点设为「无 TUN 模式」
    （`PUT /api/v1/tenants/{ws}/nodes/{id}/config`，在节点 override 中写入 `no_tun: true`），
    本机作为正常的网络成员加入：仍有虚拟 IP，可被其它节点访问，也可做子网路由与中继，只是本机
    自身没有虚拟网卡（`local-summary.interfaces` 为空）。概览页显示「运行模式：无 TUN 模式（用户态转发）」
    并给出一次性授权命令。命令按当前套件数据目录生成，界面提供「复制命令」按钮。
    DSM 的 `/tmp` 为 `noexec`，命令必须指向运行时目录。
-2. **管理员授权后**：capability 在每次启动时重新检查；一旦检测到，守护进程会**自动删除**该
-   `no_tun` override，恢复完整模式，TUN 设备出现在概览页与 `local-summary.interfaces`。
+2. **管理员授权后**：capability 在每次启动时重新检查；一旦检测到 `CAP_NET_ADMIN`，守护进程会
+   **自动删除**该 `no_tun` override，恢复完整模式，TUN 设备出现在概览页与
+   `local-summary.interfaces`。推荐的完整授权同时包含两个能力：
+   `sudo setcap cap_net_admin,cap_net_raw+ep <运行时目录>/easytier-core`
+   （`CAP_NET_ADMIN` 建虚拟网卡，`CAP_NET_RAW` 绑定网卡；缺后者则连不上 peer）。
 3. **重新下载运行时后**：新二进制会丢失文件能力，守护进程会自动重新写入 `no_tun`，无需手工判断。
 
 **为什么必须写 Console，而不是启动参数**：`--no-tun` 加在 `easytier-core` 命令行上没有任何效果。

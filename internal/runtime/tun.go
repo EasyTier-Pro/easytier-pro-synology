@@ -6,9 +6,18 @@ import (
 	"syscall"
 )
 
-// capNetAdmin is CAP_NET_ADMIN (12), the capability a process needs to create
-// and configure a TUN device.
-const capNetAdmin = 12
+// Capabilities the core needs, and what each one buys:
+//
+//   - CAP_NET_ADMIN (12) creates the virtual interface, so the host itself can
+//     originate traffic into the network. Without it the core runs in no-TUN
+//     mode.
+//   - CAP_NET_RAW (13) binds sockets to an interface. The core does this for
+//     every peer connection unless the pushed configuration disables
+//     bind_device, which the Console does not expose (see bindCapable).
+const (
+	capNetAdmin = 12
+	capNetRaw   = 13
+)
 
 const capabilityXattr = "security.capability"
 
@@ -20,6 +29,18 @@ const capabilityXattr = "security.capability"
 // as root, which is enough on its own.
 func tunCapable(corePath string) bool {
 	return fileCapability(corePath, capNetAdmin)
+}
+
+// bindCapable reports whether the core may bind a socket to an interface.
+//
+// This decides whether the node can reach any peer at all. The instances the
+// Console pushes leave the core's bind_device flag at its default of true, so
+// the core binds every outgoing socket to the local address and to the
+// interface carrying it. Linux permits that only with CAP_NET_RAW, and without
+// it each connection fails with EPERM: the node registers and looks online, but
+// its peer list stays empty.
+func bindCapable(corePath string) bool {
+	return fileCapability(corePath, capNetRaw)
 }
 
 // fileCapability reports whether a non-root exec of path obtains one capability.

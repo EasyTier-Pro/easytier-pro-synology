@@ -442,8 +442,35 @@ function pollDownload(host, status, { reset, loggedIn }) {
 
 /* 缺少 CAP_NET_ADMIN 时本机只能中继运行：给出管理员一次性授权命令。 */
 function tunGrantCommand(status) {
-	const runtimeDir = status.install_dir || '/volume1/@appdata/easytier-pro/runtime';
-	return `sudo setcap cap_net_admin,cap_net_raw+ep ${runtimeDir}/easytier-core`;
+	return `sudo setcap cap_net_admin,cap_net_raw+ep ${runtimeDir(status)}/easytier-core`;
+}
+
+/* 缺少 CAP_NET_RAW 时节点能注册但连不上任何 peer：core 默认会把每个出站 socket 绑定到
+   承载本地地址的网卡（SO_BINDTODEVICE），Linux 只允许带 CAP_NET_RAW 的进程这么做。
+   这是比「没有虚拟网卡」更严重的问题，因此单独提示。 */
+function bindNotice(status) {
+	if (!status.core_installed || status.bind_capable) {
+		return null;
+	}
+	const command = `sudo setcap cap_net_raw+ep ${runtimeDir(status)}/easytier-core`;
+	return banner(h('div', {}, [
+		h('p', { text: '本机缺少 CAP_NET_RAW，节点虽然能注册并显示在线，但无法连接任何 peer（节点列表为空）。' }),
+		h('p', { class: 'muted', text: '这是 EasyTier 默认把出站 socket 绑定到网卡所需的权限。请以管理员身份执行下面这条命令，然后重新启动套件：' }),
+		h('div', { class: 'row' }, [
+			h('code', { class: 'mono', text: command }),
+			button('复制命令', {
+				onclick: () => {
+					navigator.clipboard.writeText(command)
+						.then(() => notify('命令已复制。', 'success'))
+						.catch(() => notify('复制失败，请手动选择命令文本。', 'error'));
+				},
+			}),
+		]),
+	]), 'error');
+}
+
+function runtimeDir(status) {
+	return status.install_dir || '/volume1/@appdata/easytier-pro/runtime';
 }
 
 function tunNotice(status) {
@@ -496,6 +523,7 @@ function renderServiceStopped(status, { reset, loggedIn }) {
 	});
 	return h('div', {}, [
 		card('启动连接', [
+			bindNotice(status),
 			tunNotice(status),
 			h('p', { text: 'EasyTier 已安装，本机也已与账号关联。启动连接后，本机就会加入所选的私有网络。' }),
 			h('div', { class: 'row' }, [ startButton ]),
@@ -524,6 +552,7 @@ function renderRunning(status, auth, summary, networks, { reset, loggedIn }) {
 		? networks.machine.networks
 		: [];
 	const summaryCard = card('连接状态', [
+		bindNotice(status),
 		tunNotice(status),
 		detailList([
 			[ '运行模式', status.tun_capable ? '完整模式（本机有虚拟网卡）' : '无 TUN 模式（用户态转发）' ],
