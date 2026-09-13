@@ -53,9 +53,9 @@ func TestCachedArchiveIsReused(t *testing.T) {
 		t.Fatalf("size archive: %v", err)
 	}
 
-	manager.storeArchiveInCache(archive, "x86_64", "v2.6.4", checksum)
+	manager.storeVerifiedArchive(archive, "x86_64", "v2.6.4", checksum)
 
-	cached, ok := manager.cachedArchive("x86_64", "v2.6.4", checksum, downloadMaxArchiveBytes, size)
+	cached, ok := manager.cachedArchive("x86_64", "v2.6.4", checksum, size)
 	if !ok {
 		t.Fatal("the archive that was just cached was not found")
 	}
@@ -77,7 +77,7 @@ func TestCachedArchiveDiscardsDamage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("size archive: %v", err)
 	}
-	manager.storeArchiveInCache(archive, "x86_64", "v2.6.4", checksum)
+	manager.storeVerifiedArchive(archive, "x86_64", "v2.6.4", checksum)
 
 	name := archiveCacheName("x86_64", "v2.6.4", checksum)
 	path := filepath.Join(manager.paths.ArchiveCacheDir(), name)
@@ -85,7 +85,7 @@ func TestCachedArchiveDiscardsDamage(t *testing.T) {
 		t.Fatalf("damage cache entry: %v", err)
 	}
 
-	if _, ok := manager.cachedArchive("x86_64", "v2.6.4", checksum, downloadMaxArchiveBytes, 0); ok {
+	if _, ok := manager.cachedArchive("x86_64", "v2.6.4", checksum, 0); ok {
 		t.Fatal("a damaged cache entry was offered for reuse")
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -107,9 +107,9 @@ func TestCachedArchiveRejectsDeclaredSizeMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("size archive: %v", err)
 	}
-	manager.storeArchiveInCache(archive, "x86_64", "v2.6.4", checksum)
+	manager.storeVerifiedArchive(archive, "x86_64", "v2.6.4", checksum)
 
-	if _, ok := manager.cachedArchive("x86_64", "v2.6.4", checksum, downloadMaxArchiveBytes, size+1); ok {
+	if _, ok := manager.cachedArchive("x86_64", "v2.6.4", checksum, size+1); ok {
 		t.Fatal("an entry whose size disagrees with the release was offered for reuse")
 	}
 }
@@ -123,8 +123,8 @@ func TestStoreArchiveInCacheKeepsOneEntry(t *testing.T) {
 	firstSum, _ := fileSHA256(first)
 	secondSum, _ := fileSHA256(second)
 
-	manager.storeArchiveInCache(first, "x86_64", "v2.6.4", firstSum)
-	manager.storeArchiveInCache(second, "x86_64", "v2.6.5", secondSum)
+	manager.storeVerifiedArchive(first, "x86_64", "v2.6.4", firstSum)
+	manager.storeVerifiedArchive(second, "x86_64", "v2.6.5", secondSum)
 
 	entries, err := os.ReadDir(manager.paths.ArchiveCacheDir())
 	if err != nil {
@@ -178,7 +178,7 @@ func TestPrepareCandidateUsesCachedArchiveWithoutDownloading(t *testing.T) {
 	}
 
 	cached := newTestManager(t)
-	cached.storeArchiveInCache(archive, "x86_64", version, checksum)
+	cached.storeVerifiedArchive(archive, "x86_64", version, checksum)
 	before := atomic.LoadInt32(&requests)
 
 	candidate, err := cached.prepareCandidate(context.Background(), source, t.TempDir(),
@@ -203,7 +203,7 @@ func TestStoreArchiveInCacheNeedsAChecksum(t *testing.T) {
 	manager := newTestManager(t)
 	archive := runtimeArchive(t, "v2.6.4")
 
-	manager.storeArchiveInCache(archive, "x86_64", "v2.6.4", "")
+	manager.storeVerifiedArchive(archive, "x86_64", "v2.6.4", "")
 
 	entries, err := os.ReadDir(manager.paths.ArchiveCacheDir())
 	if err != nil {
@@ -309,4 +309,100 @@ func readLogFile(t *testing.T, manager *Manager) string {
 		t.Fatalf("read daemon log: %v", err)
 	}
 	return string(data)
+}
+
+// The cache is consulted before the free-space download limit. That limit only
+// decides whether a download may start, so applying it first would let a cached
+// archive that is now too large for the free space block the very update it was
+// kept for - and the lookup that evicts a bad entry is exactly what would be
+// skipped. The limit is passed in so the test can pin that ordering.
+func TestResolveArchivePrefersTheCacheOverTheDownloadLimit(t *testing.T) {
+	version := "v2.6.4"
+	archive := runtimeArchive(t, version)
+	checksum, err := fileSHA256(archive)
+	if err != nil {
+		t.Fatalf("hash archive: %v", err)
+	}
+	size, err := fileSize(archive)
+	if err != nil {
+		t.Fatalf("size archive: %v", err)
+	}
+
+	// A limit far below the archive size: exactly the tight-volume case.
+	const tightLimit = 1
+
+	manager := newTestManager(t)
+	manager.storeVerifiedArchive(archive, "x86_64", version, checksum)
+
+	source := downloadSource{name: "Gitee", url: "https://invalid.example/asset.zip"}
+	resolved, err := manager.resolveArchive(context.Background(), source, t.TempDir(),
+		"x86_64", version, checksum, size, tightLimit)
+	if err != nil {
+		t.Fatalf("a cached archive was refused because of the download limit: %v", err)
+	}
+	if got, hashErr := fileSHA256(resolved); hashErr != nil || got != checksum {
+		t.Fatalf("resolved archive hash = %q, %v; want the cached archive", got, hashErr)
+	}
+
+	// Without a cache the same limit still refuses the download, so the check
+	// was not simply removed.
+	fresh := newTestManager(t)
+	if _, err := fresh.resolveArchive(context.Background(), source, t.TempDir(),
+		"x86_64", version, checksum, size, tightLimit); err == nil {
+		t.Fatal("an oversized download was started despite the limit")
+	}
+}
+
+// The verified archive is moved into the cache, not copied, so peak disk usage
+// stays at one archive: on a tight volume a second copy is what makes an
+// otherwise viable download fail during extraction.
+func TestStoreVerifiedArchiveMovesInsteadOfCopying(t *testing.T) {
+	manager := newTestManager(t)
+	archive := runtimeArchive(t, "v2.6.4")
+	checksum, err := fileSHA256(archive)
+	if err != nil {
+		t.Fatalf("hash archive: %v", err)
+	}
+	stage := t.TempDir()
+	staged := filepath.Join(stage, "asset.zip")
+	if err := os.Rename(archive, staged); err != nil {
+		t.Fatalf("stage archive: %v", err)
+	}
+
+	stored := manager.storeVerifiedArchive(staged, "x86_64", "v2.6.4", checksum)
+
+	if stored != filepath.Join(manager.paths.ArchiveCacheDir(), archiveCacheName("x86_64", "v2.6.4", checksum)) {
+		t.Fatalf("stored archive path = %q", stored)
+	}
+	if _, err := os.Stat(staged); !os.IsNotExist(err) {
+		t.Fatalf("the archive was left in the staging directory: %v", err)
+	}
+	if _, err := os.Stat(stored); err != nil {
+		t.Fatalf("the archive is not in the cache: %v", err)
+	}
+}
+
+// A cache that cannot be written must not fail the update: the archive in hand
+// has already been verified, so the cost is only a future download.
+func TestStoreVerifiedArchiveKeepsTheArchiveWhenItCannotCache(t *testing.T) {
+	manager := newTestManager(t)
+	archive := runtimeArchive(t, "v2.6.4")
+	checksum, err := fileSHA256(archive)
+	if err != nil {
+		t.Fatalf("hash archive: %v", err)
+	}
+	// Make the move impossible by replacing the cache directory with a file.
+	if err := os.RemoveAll(manager.paths.ArchiveCacheDir()); err != nil {
+		t.Fatalf("remove cache dir: %v", err)
+	}
+	if err := os.WriteFile(manager.paths.ArchiveCacheDir(), []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("block cache dir: %v", err)
+	}
+
+	if got := manager.storeVerifiedArchive(archive, "x86_64", "v2.6.4", checksum); got != archive {
+		t.Fatalf("storeVerifiedArchive = %q, want the original path so the update can continue", got)
+	}
+	if _, err := os.Stat(archive); err != nil {
+		t.Fatalf("the verified archive was lost: %v", err)
+	}
 }

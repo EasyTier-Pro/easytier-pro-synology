@@ -38,10 +38,14 @@ func archiveCacheName(assetArch, version, checksum string) string {
 
 // cachedArchive returns the path of a usable cached archive for one artifact.
 //
-// An entry that no longer matches the published checksum, its declared size, or
-// the download limit is discarded rather than reported, so a damaged or
-// republished artifact costs a download instead of failing the update.
-func (m *Manager) cachedArchive(assetArch, version, checksum string, limit, declaredSize int64) (string, bool) {
+// An entry that no longer matches the published checksum or its declared size is
+// discarded rather than reported, so a damaged or republished artifact costs a
+// download instead of failing the update.
+//
+// The free-space download limit is deliberately not applied here: a cached
+// archive is not downloaded, so that limit says nothing about it, and rejecting
+// it would leave the entry blocking the update impossible to evict.
+func (m *Manager) cachedArchive(assetArch, version, checksum string, declaredSize int64) (string, bool) {
 	name := archiveCacheName(assetArch, version, checksum)
 	if name == "" {
 		return "", false
@@ -51,9 +55,7 @@ func (m *Manager) cachedArchive(assetArch, version, checksum string, limit, decl
 	if err != nil || size <= 0 {
 		return "", false
 	}
-	tooLarge := size > limit
-	sizeMismatch := declaredSize > 0 && size != declaredSize
-	if !tooLarge && !sizeMismatch {
+	if declaredSize <= 0 || size == declaredSize {
 		actual, hashErr := fileSHA256(path)
 		if hashErr == nil && strings.EqualFold(actual, strings.TrimSpace(checksum)) {
 			return path, true
@@ -64,22 +66,27 @@ func (m *Manager) cachedArchive(assetArch, version, checksum string, limit, decl
 	return "", false
 }
 
-// storeArchiveInCache keeps a verified archive for the next attempt.
+// storeVerifiedArchive keeps an archive that just passed verification and
+// returns the path it now lives at, so the work that follows reads it there.
 //
-// A cache write never fails the update: the archive in hand has already been
-// verified, so losing the cache only costs a future download.
-func (m *Manager) storeArchiveInCache(archive, assetArch, version, checksum string) {
+// The archive is moved rather than copied: the staging directory shares the
+// package volume with the cache, so a move costs no space and keeps the peak at
+// one archive instead of two - which matters precisely when the volume is tight
+// enough for the size limits to matter. Nothing here can fail the update: the
+// archive in hand is already verified, so a cache that cannot be written only
+// costs a future download.
+func (m *Manager) storeVerifiedArchive(archive, assetArch, version, checksum string) string {
 	name := archiveCacheName(assetArch, version, checksum)
 	if name == "" || filepath.Base(archive) == name {
-		return
+		return archive
 	}
-	// copyFile writes through a temporary file and renames it, so a partial
-	// write never looks like a cache entry.
-	if err := copyFile(archive, filepath.Join(m.paths.ArchiveCacheDir(), name), 0o600); err != nil {
+	target := filepath.Join(m.paths.ArchiveCacheDir(), name)
+	if err := os.Rename(archive, target); err != nil {
 		m.log.Errorf("缓存运行时归档失败: %v", err)
-		return
+		return archive
 	}
 	m.pruneArchiveCache(name)
+	return target
 }
 
 // pruneArchiveCache keeps the named entry and removes everything else, so the

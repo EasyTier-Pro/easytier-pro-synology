@@ -316,6 +316,35 @@ func (m *Manager) downloadRun(ctx context.Context, requested string) {
 	m.failDownload(PhaseValidate, 78, "Gitee 与 GitHub 均下载或校验失败。", version)
 }
 
+// resolveArchive produces the archive to verify: a previously verified cache
+// entry when one exists, and a fresh download otherwise.
+//
+// The cache is consulted before the download limit on purpose. That limit only
+// decides whether a download may start, and a cached archive needs none, so
+// asking it first would let an entry too large for the current free space block
+// the very update it was kept for - and the lookup that evicts a bad entry is
+// exactly what applying the limit first would skip. Either way the archive is
+// verified afterwards, so a cache hit trusts nothing.
+func (m *Manager) resolveArchive(ctx context.Context, source downloadSource, stage, assetArch, version, checksum string, declaredSize, limit int64) (string, error) {
+	archive := filepath.Join(stage, assetArch, fmt.Sprintf("easytier-linux-%s-%s.zip", assetArch, version))
+	if err := os.MkdirAll(filepath.Dir(archive), 0o700); err != nil {
+		return "", err
+	}
+	if cached, ok := m.cachedArchive(assetArch, version, checksum, declaredSize); ok {
+		m.log.Printf("使用本机缓存的运行时归档，跳过下载")
+		m.writeDownloadStatus(StateRunning, PhaseDownload, source.downloadPercent,
+			"正在使用本机缓存的运行时归档。", version)
+		return cached, nil
+	}
+	if declaredSize > 0 && declaredSize > limit {
+		return "", errors.New("the runtime archive exceeds the safe download limit")
+	}
+	if err := m.fetchArchive(ctx, source.url, archive, limit); err != nil {
+		return "", err
+	}
+	return archive, nil
+}
+
 // candidate is a validated, extracted runtime pair.
 type candidate struct {
 	core string
@@ -347,29 +376,12 @@ func releaseArtifact(release console.Release, assetArch string) (string, int64, 
 
 // prepareCandidate downloads and validates one archive.
 func (m *Manager) prepareCandidate(ctx context.Context, source downloadSource, stage, assetArch, version, checksum string, declaredSize int64) (candidate, error) {
-	asset := fmt.Sprintf("easytier-linux-%s-%s.zip", assetArch, version)
-	dir := filepath.Join(stage, assetArch)
-	archive := filepath.Join(dir, asset)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return candidate{}, err
-	}
 	limit, err := m.archiveLimit()
 	if err != nil {
 		return candidate{}, err
 	}
-	if declaredSize > 0 && declaredSize > limit {
-		return candidate{}, errors.New("the runtime archive exceeds the safe download limit")
-	}
-	// An archive of exactly this artifact that was downloaded and verified
-	// before is reused rather than fetched again, which is what makes a retry
-	// after a failed install cheap. It goes through the same verification below
-	// as a fresh download, so reusing it trusts nothing.
-	if cached, ok := m.cachedArchive(assetArch, version, checksum, limit, declaredSize); ok {
-		archive = cached
-		m.log.Printf("使用本机缓存的运行时归档，跳过下载")
-		m.writeDownloadStatus(StateRunning, PhaseDownload, source.downloadPercent,
-			"正在使用本机缓存的运行时归档。", version)
-	} else if err := m.fetchArchive(ctx, source.url, archive, limit); err != nil {
+	archive, err := m.resolveArchive(ctx, source, stage, assetArch, version, checksum, declaredSize, limit)
+	if err != nil {
 		return candidate{}, err
 	}
 	size, err := fileSize(archive)
@@ -403,8 +415,10 @@ func (m *Manager) prepareCandidate(ctx context.Context, source downloadSource, s
 		m.log.Printf("Console 未提供 %s 的校验和，改用本地校验", version)
 	}
 	// The archive is authentic, so it is worth keeping for a retry. Only an
-	// archive whose checksum was published can be cached.
-	m.storeArchiveInCache(archive, assetArch, version, checksum)
+	// archive whose checksum was published can be cached. The move is taken
+	// before the archive is read again so its contents are only ever stored
+	// once, and the returned path is the one the rest of the work reads.
+	archive = m.storeVerifiedArchive(archive, assetArch, version, checksum)
 	members, err := m.archiveMembers(archive)
 	if err != nil {
 		return candidate{}, err
@@ -413,7 +427,7 @@ func (m *Manager) prepareCandidate(ctx context.Context, source downloadSource, s
 	if core == "" || cli == "" {
 		return candidate{}, errors.New("the archive does not contain exactly one easytier-core and easytier-cli")
 	}
-	extracted := filepath.Join(dir, "extracted")
+	extracted := filepath.Join(stage, assetArch, "extracted")
 	if err := os.MkdirAll(extracted, 0o700); err != nil {
 		return candidate{}, err
 	}
