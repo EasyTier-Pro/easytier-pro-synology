@@ -78,13 +78,24 @@ interface MountOptions {
 	networksError?: Error
 	summary?: unknown
 	download?: unknown
+	/** Delays the download answer, so the two initial requests settle apart. */
+	downloadDelayMs?: number
 }
 
 async function mountView(options: MountOptions = {}) {
 	const { status = {}, loggedIn = true } = options
 	apiMock.status.mockResolvedValue({ ...baseStatus, ...status })
 	apiMock.authStatus.mockResolvedValue({ logged_in: loggedIn })
-	apiMock.downloadStatus.mockResolvedValue(options.download ?? { state: 'idle', phase: '', percent: 0 })
+	const downloadAnswer = options.download ?? { state: 'idle', phase: '', percent: 0 }
+	if (options.downloadDelayMs) {
+		// The screen is chosen from `status`; a slower download answer reproduces
+		// the order a real install produces when the page is opened mid-install.
+		apiMock.downloadStatus.mockImplementation(() => new Promise((resolve) => {
+			setTimeout(() => resolve(downloadAnswer), options.downloadDelayMs)
+		}))
+	} else {
+		apiMock.downloadStatus.mockResolvedValue(downloadAnswer)
+	}
 	apiMock.localSummary.mockResolvedValue(options.summary ?? {
 		node: { ipv4_addr: '10.0.0.2' }, peers: [], interfaces: [ 'tun0' ],
 	})
@@ -247,5 +258,37 @@ describe('overview region updates', () => {
 		// The failure must not appear together with the empty-list table: those are
 		// two different answers to the same question.
 		expect(wrapper.text()).not.toContain('该工作空间还没有网络')
+	})
+
+	// Opening the page while an install is already running has to follow it. The
+	// screen and the download state come from two separate requests, so watching
+	// only the screen missed this case entirely.
+	it('follows an install that was already running when the page opened', async () => {
+		const wrapper = await mountView({
+			status: { core_installed: false, cli_installed: false, running: false },
+			download: { state: 'running', phase: 'download', percent: 40 },
+			// The status answer arrives first, so the screen is already the runtime
+			// screen before the download state is known.
+			downloadDelayMs: 120,
+		})
+		await new Promise((resolve) => setTimeout(resolve, 200))
+		const afterMount = apiMock.downloadStatus.mock.calls.length
+
+		await new Promise((resolve) => setTimeout(resolve, 1700))
+		await flushPromises()
+
+		expect(apiMock.downloadStatus.mock.calls.length).toBeGreaterThan(afterMount)
+		expect(wrapper.text()).toContain('正在安装 EasyTier 运行时')
+	})
+
+	// A component used in a template without being imported renders as an unknown
+	// element, which produces a page that looks broken but raises no error. This
+	// checks the whole view instead of trusting each file's imports.
+	it('renders every component it uses', async () => {
+		const wrapper = await mountView()
+		const unresolved = wrapper.findAll('*')
+			.map((node) => node.element.tagName.toLowerCase())
+			.filter((tag) => tag.startsWith('n-'))
+		expect(unresolved).toEqual([])
 	})
 })

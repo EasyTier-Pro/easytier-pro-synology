@@ -177,7 +177,14 @@ watch(screen, (value) => {
 			void networks.reload()
 		}
 	}
-	if (value === 'runtime' && downloadRunning.value) {
+})
+
+// Polling has to follow both the screen and the download state: they arrive from
+// two requests, so a page opened while an install is already running would
+// otherwise never start following it.
+const followDownload = computed(() => screen.value === 'runtime' && downloadRunning.value)
+watch(followDownload, (active) => {
+	if (active) {
 		pollDownload()
 	}
 })
@@ -213,11 +220,8 @@ function pollDownload(): void {
 function startDownload(): void {
 	api.downloadStart().then(() => {
 		notify('已开始下载并安装运行时。', 'success')
-		void refresh('status', 'download').then(() => {
-			if (downloadRunning.value) {
-				pollDownload()
-			}
-		})
+		// Reading the new state is enough: the watcher above starts polling.
+		void refresh('status', 'download')
 	}).catch((error) => {
 		if (error && (error as { code?: string }).code === 'download_busy') {
 			void refresh('status', 'download')

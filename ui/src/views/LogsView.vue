@@ -5,7 +5,7 @@ import { api } from '@/api/client'
 import { messageOf, needsRelogin } from '@/api/errors'
 import { notify } from '@/naive'
 import { useResource } from '@/composables/useResource'
-import { refreshStatus, shared } from '@/stores/resources'
+import { logLineCount, refreshStatus, shared } from '@/stores/resources'
 import { createTimerScope } from '@/utils/timers'
 import { interfaceNames } from '@/utils/summary'
 import SectionCard from '@/components/SectionCard.vue'
@@ -19,8 +19,8 @@ import DetailList from '@/components/DetailList.vue'
 const LINE_OPTIONS = [ 100, 200, 500 ]
 const EMPTY_LOGS = '暂无匹配的日志'
 
-// The chosen line count outlives navigation: it is a preference, not page state.
-const lineCount = ref(200)
+// The chosen line count lives in the shared state, so it survives navigation.
+const lineCount = logLineCount
 const lineOptions = LINE_OPTIONS.map((count) => ({ label: `${count} 行`, value: count }))
 
 const timerScope = createTimerScope()

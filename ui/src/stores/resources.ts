@@ -6,6 +6,7 @@
 // background, so moving between pages looks like switching a view rather than
 // reloading a document.
 
+import { ref } from 'vue'
 import { api } from '@/api/client'
 import { ApiError } from '@/api/errors'
 import { useResource, type Resource } from '@/composables/useResource'
@@ -42,6 +43,12 @@ function create(): Resources {
 		networks: useResource(() => api.networks()),
 	}
 }
+
+/**
+ * How many log lines the logs page asks for. It is a preference rather than page
+ * state, so leaving the page and coming back keeps the operator's choice.
+ */
+export const logLineCount = ref(200)
 
 let resources = create()
 
