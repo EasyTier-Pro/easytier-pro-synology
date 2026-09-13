@@ -87,4 +87,23 @@ describe('console web address', () => {
 	it('falls back to the public console for an unusable address', () => {
 		expect(consoleWebURL('not a url')).toBe('https://console.easytier.net/')
 	})
+
+	// The Console uses hash routing, so a page is addressed after the fragment.
+	// Getting this shape wrong sends the operator to the Console home page
+	// instead of the page the button names.
+	it('addresses a Console page after the fragment', () => {
+		expect(consoleWebURL('https://api.console.easytier.net', '/devices'))
+			.toBe('https://console.easytier.net/#/devices')
+		expect(consoleWebURL('https://api.console.easytier.net', '/networks/abc'))
+			.toBe('https://console.easytier.net/#/networks/abc')
+	})
+
+	it('keeps the port when addressing a page', () => {
+		expect(consoleWebURL('https://console.example.com:8443', '/devices'))
+			.toBe('https://console.example.com:8443/#/devices')
+	})
+
+	it('addresses a page on the fallback address too', () => {
+		expect(consoleWebURL('not a url', '/devices')).toBe('https://console.easytier.net/#/devices')
+	})
 })

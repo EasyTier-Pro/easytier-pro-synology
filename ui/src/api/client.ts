@@ -155,14 +155,18 @@ export const api = {
 /**
  * consoleWebURL derives the Console web console address from the configured
  * API address, matching the desktop client.
+ *
+ * `route` is a Console page, given the way its router spells it ("/devices").
+ * The Console uses hash routing, so a page is addressed after the fragment.
  */
-export function consoleWebURL(consoleURL?: string): string {
+export function consoleWebURL(consoleURL?: string, route = ''): string {
 	let base: URL
 	try {
 		base = new URL(consoleURL || 'https://api.console.easytier.net')
 	} catch {
-		return 'https://console.easytier.net/'
+		return `https://console.easytier.net/${route ? `#${route}` : ''}`
 	}
 	const host = base.hostname === 'api.console.easytier.net' ? 'console.easytier.net' : base.hostname
-	return `${base.protocol}//${host}${base.port ? `:${base.port}` : ''}/`
+	const page = route ? `#${route}` : ''
+	return `${base.protocol}//${host}${base.port ? `:${base.port}` : ''}/${page}`
 }

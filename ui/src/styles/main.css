@@ -88,6 +88,7 @@ body {
 	display: flex;
 	gap: 4px;
 	margin-left: auto;
+	margin-right: 4px;
 	flex-wrap: wrap;
 }
 
@@ -281,5 +282,13 @@ body {
 /* The appearance control sits with the navigation, at the end of the header. */
 .etp-theme-select {
 	width: 116px;
+	flex: none;
+}
+
+/* Header actions: the Console entry and the appearance control. */
+.etp-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
 	flex: none;
 }
