@@ -40,10 +40,15 @@ func archiveCacheName(assetArch, version string) string {
 // describes, so it is discarded rather than offered.
 func (m *Manager) cachedArchive(assetArch, version string, declaredSize int64) (string, bool) {
 	path := filepath.Join(m.paths.ArchiveCacheDir(), archiveCacheName(assetArch, version))
-	size, err := fileSize(path)
-	if err != nil || size <= 0 {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 {
+		// Anything else - a directory, a device, an unreadable path - is not the
+		// artifact. It is left alone rather than removed, because a store onto
+		// its name replaces it and an archive that cannot be removed must not
+		// stop the update from being downloaded.
 		return "", false
 	}
+	size := info.Size()
 	if declaredSize > 0 && size != declaredSize {
 		m.log.Printf("本机缓存的运行时归档与发布信息不一致，将重新下载")
 		os.Remove(path)
@@ -71,6 +76,9 @@ func (m *Manager) storeArchive(archive, assetArch, version string) string {
 		m.log.Errorf("缓存运行时归档失败: %v", err)
 		return archive
 	}
+	// Only a store that succeeded may prune: pruning after a failed one would
+	// delete the entry it failed to replace, leaving nothing to retry from.
+	m.pruneArchiveCache(filepath.Base(target))
 	return target
 }
 

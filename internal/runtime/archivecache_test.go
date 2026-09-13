@@ -2,6 +2,9 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/EasyTier-Pro/easytier-pro-dsm/internal/console"
 )
 
 // runtimeArchive builds a zip that passes the whole candidate pipeline: two
@@ -329,7 +334,7 @@ func TestRejectedCandidateDoesNotReplaceTheUsableArchive(t *testing.T) {
 
 	if _, err := manager.prepareCandidate(context.Background(),
 		downloadSource{name: "Gitee", url: server.URL + "/asset.zip"},
-		t.TempDir(), "armv7hf", "v2.6.4", "", int64(len(rejectedBody))); err == nil {
+		t.TempDir(), "armv7hf", "v2.6.4", sha256Hex(rejectedBody), int64(len(rejectedBody))); err == nil {
 		t.Fatal("an archive whose binaries report the wrong version was accepted")
 	}
 
@@ -516,5 +521,178 @@ func TestSuccessfulInstallReleasesTheRetainedArchive(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("the archive was kept after a successful install: %v", entryNames(entries))
+	}
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// A failure that says nothing about the retained file - here, extraction cannot
+// even create its directory - must not send the daemon back to the network.
+// Re-downloading the same bytes would cost the transfer this cache exists to
+// save, and would fail in exactly the same way.
+func TestEnvironmentalFailureKeepsTheRetainedArchive(t *testing.T) {
+	version := "v2.6.4"
+	archive := runtimeArchive(t, version)
+	size, err := fileSize(archive)
+	if err != nil {
+		t.Fatalf("size archive: %v", err)
+	}
+
+	var requests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		http.Error(w, "must not be used", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	manager := newTestManager(t)
+	cached := manager.storeArchive(archive, "x86_64", version)
+
+	// The staging directory is usable, so a download would go through: only the
+	// extraction target is blocked, by a regular file where its directory goes.
+	stage := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(stage, "x86_64"), 0o700); err != nil {
+		t.Fatalf("create staging dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stage, "x86_64", "extracted"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("block the extraction dir: %v", err)
+	}
+
+	if _, err := manager.prepareCandidate(context.Background(),
+		downloadSource{name: "Gitee", url: server.URL + "/asset.zip"},
+		stage, "x86_64", version, "", size); err == nil {
+		t.Fatal("an impossible extraction directory produced a candidate")
+	}
+	if got := atomic.LoadInt32(&requests); got != 0 {
+		t.Fatalf("an environmental failure triggered %d downloads", got)
+	}
+	if _, err := os.Stat(cached); err != nil {
+		t.Fatalf("an environmental failure discarded the retained archive: %v", err)
+	}
+}
+
+// A store that fails must not prune: the entry it failed to replace is the only
+// copy that can be installed without the network. The target is blocked by a
+// non-empty directory, which fails the rename while leaving the cache writable,
+// so a prune would go through.
+func TestFailedStoreKeepsThePreviousArchive(t *testing.T) {
+	manager := newTestManager(t)
+	previous := manager.storeArchive(runtimeArchiveFor(t, "armv7", "v2.6.4"), "armv7", "v2.6.4")
+
+	blocked := filepath.Join(manager.paths.ArchiveCacheDir(), archiveCacheName("armv7hf", "v2.6.4"))
+	if err := os.MkdirAll(filepath.Join(blocked, "inner"), 0o700); err != nil {
+		t.Fatalf("create blocking directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(blocked, "inner", "file"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("populate blocking directory: %v", err)
+	}
+
+	staged := filepath.Join(t.TempDir(), "asset.zip")
+	if err := os.Rename(runtimeArchiveFor(t, "armv7hf", "v2.6.4"), staged); err != nil {
+		t.Fatalf("stage archive: %v", err)
+	}
+	if got := manager.storeArchive(staged, "armv7hf", "v2.6.4"); got != staged {
+		t.Fatalf("storeArchive = %q, want the staging path when the move fails", got)
+	}
+
+	if _, err := os.Stat(previous); err != nil {
+		t.Fatalf("a failed store pruned the previous archive: %v", err)
+	}
+}
+
+// An entry that is not a regular file is not the artifact. It must never be
+// offered, because a directory cannot be removed and offering it again would
+// make every later attempt fail in the same place, with no download at all.
+func TestDirectoryEntryIsNeverOffered(t *testing.T) {
+	manager := newTestManager(t)
+	path := filepath.Join(manager.paths.ArchiveCacheDir(), archiveCacheName("x86_64", "v2.6.4"))
+	if err := os.MkdirAll(filepath.Join(path, "inner"), 0o700); err != nil {
+		t.Fatalf("create directory entry: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "inner", "file"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("populate directory entry: %v", err)
+	}
+
+	// Checked with no published size, so only the file kind can rule it out.
+	if _, ok := manager.cachedArchive("x86_64", "v2.6.4", 0); ok {
+		t.Fatal("a directory was offered as the retained archive")
+	}
+}
+
+// A directory in the way must not stop the update: it is passed over, the
+// archive is downloaded, and the install proceeds.
+func TestUnevictableEntryDoesNotBlockTheDownload(t *testing.T) {
+	version := "v2.6.4"
+	archive := runtimeArchive(t, version)
+	body, err := os.ReadFile(archive)
+	if err != nil {
+		t.Fatalf("read archive: %v", err)
+	}
+	size, err := fileSize(archive)
+	if err != nil {
+		t.Fatalf("size archive: %v", err)
+	}
+
+	var requests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+
+	manager := newTestManager(t)
+	blocked := filepath.Join(manager.paths.ArchiveCacheDir(), archiveCacheName("x86_64", version))
+	if err := os.MkdirAll(filepath.Join(blocked, "inner"), 0o700); err != nil {
+		t.Fatalf("create blocking directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(blocked, "inner", "file"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("populate blocking directory: %v", err)
+	}
+
+	candidate, err := manager.prepareCandidate(context.Background(),
+		downloadSource{name: "Gitee", url: server.URL + "/asset.zip"},
+		t.TempDir(), "x86_64", version, shaOf(t, archive), size)
+	if err != nil {
+		t.Fatalf("an unevictable cache entry blocked the update: %v", err)
+	}
+	if got := atomic.LoadInt32(&requests); got != 1 {
+		t.Fatalf("downloads = %d, want the archive downloaded once", got)
+	}
+	if !binaryMatchesVersion(context.Background(), candidate.core, version) {
+		t.Fatal("the downloaded archive did not produce a usable core binary")
+	}
+	if log := readLogFile(t, manager); strings.Contains(log, "本机缓存的运行时归档不可用") {
+		t.Fatalf("the directory was treated as a retained archive: %q", log)
+	}
+}
+
+// A size published without a checksum still identifies the artifact, so it must
+// reach the archive lookup rather than being dropped with the missing checksum.
+func TestReleaseArtifactReadsTheSizeWithoutAChecksum(t *testing.T) {
+	release := console.Release{Stable: console.VersionInfo{
+		Version: "v2.6.4",
+		Artifacts: map[string]console.Artifact{
+			"linux-x86_64": {Size: json.Number("25506523")},
+		},
+	}}
+	checksum, size, aerr := releaseArtifact(release, "x86_64")
+	if aerr != nil {
+		t.Fatalf("releaseArtifact: %v", aerr)
+	}
+	if checksum != "" {
+		t.Fatalf("checksum = %q, want none", checksum)
+	}
+	if size != 25506523 {
+		t.Fatalf("size = %d, want the published size", size)
+	}
+
+	// With neither published, nothing is claimed.
+	empty := console.Release{Stable: console.VersionInfo{Version: "v2.6.4"}}
+	if checksum, size, aerr := releaseArtifact(empty, "x86_64"); aerr != nil || checksum != "" || size != 0 {
+		t.Fatalf("releaseArtifact without an artifact = %q, %d, %v", checksum, size, aerr)
 	}
 }

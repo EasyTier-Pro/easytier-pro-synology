@@ -331,23 +331,30 @@ func (m *Manager) downloadRun(ctx context.Context, requested string) {
 // block the very update it was kept for - and the lookup that discards a bad
 // entry is exactly what applying the limit first would skip.
 func (m *Manager) resolveArchive(ctx context.Context, source downloadSource, stage, assetArch, version string, declaredSize, limit int64) (string, bool, error) {
-	archive := filepath.Join(stage, assetArch, archiveCacheName(assetArch, version))
-	if err := os.MkdirAll(filepath.Dir(archive), 0o700); err != nil {
-		return "", false, err
-	}
 	if cached, ok := m.cachedArchive(assetArch, version, declaredSize); ok {
 		m.log.Printf("使用本机缓存的运行时归档，跳过下载")
 		m.writeDownloadStatus(StateRunning, PhaseDownload, source.downloadPercent,
 			"正在使用本机缓存的运行时归档。", version)
 		return cached, true, nil
 	}
+	archive, err := m.downloadArchive(ctx, source, stage, assetArch, version, declaredSize, limit)
+	return archive, false, err
+}
+
+// downloadArchive fetches one archive into the staging directory, which is left
+// to the caller to remove.
+func (m *Manager) downloadArchive(ctx context.Context, source downloadSource, stage, assetArch, version string, declaredSize, limit int64) (string, error) {
+	archive := filepath.Join(stage, assetArch, archiveCacheName(assetArch, version))
+	if err := os.MkdirAll(filepath.Dir(archive), 0o700); err != nil {
+		return "", err
+	}
 	if declaredSize > 0 && declaredSize > limit {
-		return "", false, errors.New("the runtime archive exceeds the safe download limit")
+		return "", errors.New("the runtime archive exceeds the safe download limit")
 	}
 	if err := m.fetchArchive(ctx, source.url, archive, limit); err != nil {
-		return "", false, err
+		return "", err
 	}
-	return archive, false, nil
+	return archive, nil
 }
 
 // candidate is a validated, extracted runtime pair.
@@ -357,35 +364,48 @@ type candidate struct {
 }
 
 // releaseArtifact reads the optional checksum and size for one asset.
+//
+// The two are read independently: a Console that publishes a size without a
+// checksum still describes the artifact, and that size is the only identity
+// check available to a retained archive, so losing it would leave the archive
+// unverified in every way.
 func releaseArtifact(release console.Release, assetArch string) (string, int64, *apperr.Error) {
 	artifact, ok := release.Stable.Artifacts["linux-"+assetArch]
 	if !ok {
 		return "", 0, nil
 	}
 	checksum := strings.ToLower(strings.TrimSpace(artifact.SHA256))
-	if checksum == "" {
-		return "", 0, nil
-	}
-	if len(checksum) != 64 {
-		return "", 0, apperr.New(apperr.CodeInvalidConsoleResponse)
-	}
-	if _, err := hex.DecodeString(checksum); err != nil {
-		return "", 0, apperr.New(apperr.CodeInvalidConsoleResponse)
+	if checksum != "" {
+		if len(checksum) != 64 {
+			return "", 0, apperr.New(apperr.CodeInvalidConsoleResponse)
+		}
+		if _, err := hex.DecodeString(checksum); err != nil {
+			return "", 0, apperr.New(apperr.CodeInvalidConsoleResponse)
+		}
 	}
 	size, err := artifact.Size.Int64()
 	if err != nil || size <= 0 {
+		if checksum == "" {
+			// Nothing usable was published for this asset, which is the normal
+			// case for a Console without artifacts.
+			return "", 0, nil
+		}
 		return "", 0, apperr.New(apperr.CodeInvalidConsoleResponse)
 	}
 	return checksum, size, nil
 }
 
-// prepareCandidate downloads and validates one archive.
 // prepareCandidate produces a runtime pair this host accepts, from the retained
 // archive when there is one and from a fresh download otherwise.
 //
-// A retained archive that fails the checks below is discarded and downloaded
-// again, in this same call. Without that, one damaged copy would fail every
-// later attempt in exactly the same way and the update could never proceed.
+// A retained file that no longer matches what was published is replaced by a
+// download in the same call, because it would otherwise fail every later
+// attempt in exactly the same way. Only that kind of failure is retried: the
+// rest - no free space, an unwritable directory, a binary that will not run -
+// say nothing about the file, and downloading the same bytes again would cost
+// the transfer this cache exists to save. The fresh copy is fetched before the
+// retained one is touched, so a download that fails leaves the cache as it was
+// rather than emptying it.
 func (m *Manager) prepareCandidate(ctx context.Context, source downloadSource, stage, assetArch, version, checksum string, declaredSize int64) (candidate, error) {
 	limit, err := m.archiveLimit()
 	if err != nil {
@@ -396,17 +416,21 @@ func (m *Manager) prepareCandidate(ctx context.Context, source downloadSource, s
 		return candidate{}, err
 	}
 	result, err := m.buildCandidate(ctx, source, archive, stage, assetArch, version, checksum, declaredSize)
-	if err == nil || !retained {
+	if err == nil || !retained || !errors.Is(err, errArchiveUnusable) {
 		return result, err
 	}
 	m.log.Errorf("本机缓存的运行时归档不可用，将重新下载: %v", err)
-	os.Remove(archive)
-	archive, _, err = m.resolveArchive(ctx, source, stage, assetArch, version, declaredSize, limit)
+	fresh, err := m.downloadArchive(ctx, source, stage, assetArch, version, declaredSize, limit)
 	if err != nil {
 		return candidate{}, err
 	}
-	return m.buildCandidate(ctx, source, archive, stage, assetArch, version, checksum, declaredSize)
+	return m.buildCandidate(ctx, source, fresh, stage, assetArch, version, checksum, declaredSize)
 }
+
+// errArchiveUnusable marks a failure that says the file itself does not match
+// what was published, and which a fresh download may therefore fix. Failures of
+// the environment around the archive are deliberately not marked.
+var errArchiveUnusable = errors.New("the runtime archive is unusable")
 
 // buildCandidate checks one archive and extracts the runtime pair from it.
 func (m *Manager) buildCandidate(ctx context.Context, source downloadSource, archive, stage, assetArch, version, checksum string, declaredSize int64) (candidate, error) {
@@ -415,10 +439,10 @@ func (m *Manager) buildCandidate(ctx context.Context, source downloadSource, arc
 		return candidate{}, err
 	}
 	if size <= 0 {
-		return candidate{}, errors.New("empty archive")
+		return candidate{}, fmt.Errorf("%w: empty archive", errArchiveUnusable)
 	}
 	if declaredSize > 0 && size != declaredSize {
-		return candidate{}, errors.New("archive size does not match the release metadata")
+		return candidate{}, fmt.Errorf("%w: size does not match the release metadata", errArchiveUnusable)
 	}
 	if err := m.requireFreeSpace(size + 2*1024*1024); err != nil {
 		return candidate{}, err
@@ -432,7 +456,7 @@ func (m *Manager) buildCandidate(ctx context.Context, source downloadSource, arc
 			return candidate{}, err
 		}
 		if actual != checksum {
-			return candidate{}, errors.New("archive checksum mismatch")
+			return candidate{}, fmt.Errorf("%w: checksum mismatch", errArchiveUnusable)
 		}
 	} else {
 		if !strings.HasPrefix(source.url, "https://") {
@@ -444,11 +468,11 @@ func (m *Manager) buildCandidate(ctx context.Context, source downloadSource, arc
 	// archive whose checksum was published can be cached.
 	members, err := m.archiveMembers(archive)
 	if err != nil {
-		return candidate{}, err
+		return candidate{}, fmt.Errorf("%w: %v", errArchiveUnusable, err)
 	}
 	core, cli := runtimeMembers(members, assetArch)
 	if core == "" || cli == "" {
-		return candidate{}, errors.New("the archive does not contain exactly one easytier-core and easytier-cli")
+		return candidate{}, fmt.Errorf("%w: it does not contain exactly one easytier-core and easytier-cli", errArchiveUnusable)
 	}
 	extracted := filepath.Join(stage, assetArch, "extracted")
 	if err := os.MkdirAll(extracted, 0o700); err != nil {
@@ -477,8 +501,7 @@ func (m *Manager) buildCandidate(ctx context.Context, source downloadSource, arc
 	// Kept only now that this host accepted the archive, so a build this device
 	// rejects - the armv7hf one on a soft-float host, for instance - never
 	// replaces the archive that does work.
-	archive = m.storeArchive(archive, assetArch, version)
-	m.pruneArchiveCache(archiveCacheName(assetArch, version))
+	m.storeArchive(archive, assetArch, version)
 	return candidate{core: corePath, cli: cliPath}, nil
 }
 
