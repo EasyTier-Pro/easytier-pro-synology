@@ -231,11 +231,24 @@ function startDownload(): void {
 	})
 }
 
+// Starting and restarting take a moment, so the button is held disabled while
+// the request is in flight: a second click would ask for the same change again.
+const serviceActionInFlight = ref(false)
+
 function serviceAction(action: 'start' | 'stop' | 'restart'): void {
+	if (serviceActionInFlight.value) {
+		return
+	}
+	serviceActionInFlight.value = true
 	api.serviceAction(action).then(() => {
-		notify('连接已启动。', 'success')
-		void refresh('status', 'summary', 'networks')
-	}).catch((error) => notify(messageOf(error), 'error'))
+		notify(action === 'restart' ? '操作已完成。' : '连接已启动。', 'success')
+		void refresh('status', 'summary', 'networks').finally(() => {
+			serviceActionInFlight.value = false
+		})
+	}).catch((error) => {
+		serviceActionInFlight.value = false
+		notify(messageOf(error), 'error')
+	})
 }
 
 async function confirmLeave(network: Network): Promise<void> {
@@ -494,7 +507,7 @@ onUnmounted(() => {
 					EasyTier 已安装，本机也已与账号关联。启动连接后，本机就会加入所选的私有网络。
 				</p>
 				<n-space>
-					<n-button type="primary" @click="serviceAction('start')">启动连接</n-button>
+					<n-button type="primary" :disabled="serviceActionInFlight" @click="serviceAction('start')">启动连接</n-button>
 				</n-space>
 				<AccountActions :status="current || {}" :logged-in="loggedIn" @logout="confirmLogout" @disconnect="confirmDisconnect" />
 			</SectionCard>
@@ -515,7 +528,7 @@ onUnmounted(() => {
 				<DetailList v-else :entries="detailEntries" />
 				<n-space v-if="summaryState === 'unavailable'">
 					<n-button @click="refresh('status', 'summary', 'networks')">刷新</n-button>
-					<n-button @click="serviceAction('restart')">重启连接</n-button>
+					<n-button :disabled="serviceActionInFlight" @click="serviceAction('restart')">重启连接</n-button>
 				</n-space>
 			</SectionCard>
 

@@ -77,6 +77,7 @@ interface MountOptions {
 	networks?: unknown
 	networksError?: Error
 	summary?: unknown
+	summaryError?: Error
 	download?: unknown
 	/** Delays the download answer, so the two initial requests settle apart. */
 	downloadDelayMs?: number
@@ -96,9 +97,13 @@ async function mountView(options: MountOptions = {}) {
 	} else {
 		apiMock.downloadStatus.mockResolvedValue(downloadAnswer)
 	}
-	apiMock.localSummary.mockResolvedValue(options.summary ?? {
-		node: { ipv4_addr: '10.0.0.2' }, peers: [], interfaces: [ 'tun0' ],
-	})
+	if (options.summaryError) {
+		apiMock.localSummary.mockRejectedValue(options.summaryError)
+	} else {
+		apiMock.localSummary.mockResolvedValue(options.summary ?? {
+			node: { ipv4_addr: '10.0.0.2' }, peers: [], interfaces: [ 'tun0' ],
+		})
+	}
 	if (options.networksError) {
 		apiMock.networks.mockRejectedValue(options.networksError)
 	} else {
@@ -279,6 +284,19 @@ describe('overview region updates', () => {
 
 		expect(apiMock.downloadStatus.mock.calls.length).toBeGreaterThan(afterMount)
 		expect(wrapper.text()).toContain('正在安装 EasyTier 运行时')
+	})
+
+	// Each service action reports what it did; restarting is not starting, and
+	// the old page said so.
+	it('reports a restart differently from a start', async () => {
+		// Restarting is offered where the connection details could not be read.
+		const wrapper = await mountView({ summaryError: new Error('读取失败') })
+		apiMock.serviceAction.mockResolvedValue({})
+
+		await wrapper.findAll('button').find((item) => item.text().includes('重启连接'))!.trigger('click')
+		await flushPromises()
+		expect(apiMock.serviceAction).toHaveBeenCalledWith('restart')
+		expect(notifyMock).toHaveBeenCalledWith('操作已完成。', 'success')
 	})
 
 	// A component used in a template without being imported renders as an unknown
