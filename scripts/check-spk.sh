@@ -83,6 +83,10 @@ for spk in "$@"; do
 	done
 
 	package_members="$(tar tzf "$work/package.tgz")"
+	# The interface ships to users; its browser tests and test harness must not.
+	if printf '%s\n' "$package_members" | grep -qE '(^|/)[^/]*\.test\.mjs$|(^|/)testdom\.mjs$'; then
+		fail "$spk: package.tgz ships browser test files: $(printf '%s\n' "$package_members" | grep -E '(^|/)[^/]*\.test\.mjs$|(^|/)testdom\.mjs$' | tr '\n' ' ')"
+	fi
 	for member in $required_package_files; do
 		printf '%s\n' "$package_members" | grep -qx "./$member" \
 			|| printf '%s\n' "$package_members" | grep -qx "$member" \

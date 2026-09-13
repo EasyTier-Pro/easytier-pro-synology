@@ -57,10 +57,12 @@ build_variant() {
 			-o "$work/package/bin/easytier-pro-dsm" ./cmd/easytier-pro-dsm
 	)
 
-	# Static interface, without the Go source file that embeds it.
+	# Static interface, without the Go source file that embeds it and without
+	# the browser test harness, which is development-only.
 	(
 		cd "$ROOT/ui"
-		find . -type f ! -name 'embed.go' -print | while IFS= read -r file; do
+		find . -type f ! -name 'embed.go' ! -name '*.test.mjs' ! -name 'testdom.mjs' -print \
+			| while IFS= read -r file; do
 			target="$work/package/ui/${file#./}"
 			mkdir -p "$(dirname "$target")"
 			cp "$file" "$target"
