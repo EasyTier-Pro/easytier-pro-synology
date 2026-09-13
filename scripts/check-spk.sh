@@ -34,7 +34,7 @@ version_ge() {
 
 required_info_keys="package version os_min_ver arch maintainer maintainer_url distributor distributor_url support_url displayname description description_chs dsmuidir dsmappname precheckstartstop extractsize"
 required_members="INFO package.tgz scripts/start-stop-status conf/privilege conf/resource PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG"
-required_package_files="bin/easytier-pro-dsm ui/index.html ui/config ui/app.js ui/styles.css ui/lib/api.js ui/lib/dom.js ui/pages/overview.js ui/pages/networks.js ui/pages/settings.js ui/pages/logs.js nginx/easytier-pro.conf"
+required_package_files="bin/easytier-pro-dsm ui/index.html ui/config nginx/easytier-pro.conf"
 
 for spk in "$@"; do
 	[ -f "$spk" ] || fail "missing file: $spk"
@@ -83,15 +83,34 @@ for spk in "$@"; do
 	done
 
 	package_members="$(tar tzf "$work/package.tgz")"
-	# The interface ships to users; its browser tests and test harness must not.
-	if printf '%s\n' "$package_members" | grep -qE '(^|/)[^/]*\.test\.mjs$|(^|/)testdom\.mjs$'; then
-		fail "$spk: package.tgz ships browser test files: $(printf '%s\n' "$package_members" | grep -E '(^|/)[^/]*\.test\.mjs$|(^|/)testdom\.mjs$' | tr '\n' ' ')"
+	# The interface ships to users; its test suite must not. The suite is
+	# TypeScript under src/, which the leak check below rejects wholesale, so this
+	# only has to catch a test file that ever reaches the build output.
+	if printf '%s\n' "$package_members" | grep -qE '(^|/)[^/]*\.(test|spec)\.[jt]sx?$'; then
+		fail "$spk: package.tgz ships test files: $(printf '%s\n' "$package_members" | grep -E '(^|/)[^/]*\.(test|spec)\.[jt]sx?$' | tr '\n' ' ')"
 	fi
 	for member in $required_package_files; do
 		printf '%s\n' "$package_members" | grep -qx "./$member" \
 			|| printf '%s\n' "$package_members" | grep -qx "$member" \
 			|| fail "$spk: package.tgz is missing $member"
 	done
+	# The interface is a built bundle, so the assets carry hashed names and only
+	# their presence and kind can be checked.
+	printf '%s\n' "$package_members" | grep -qE '(^|/|\./)ui/assets/[^/]+\.js$' \
+		|| fail "$spk: package.tgz has no bundled interface script"
+	printf '%s\n' "$package_members" | grep -qE '(^|/|\./)ui/assets/[^/]+\.css$' \
+		|| fail "$spk: package.tgz has no bundled interface stylesheet"
+
+	# Nothing from the build environment may reach the appliance: neither the
+	# interface sources and their tests, nor the package manager's tree, nor the
+	# source maps that would only enlarge the package.
+	for pattern in 'ui/src/' 'ui/node_modules/' 'ui/package.json' 'ui/package-lock.json' \
+		'ui/tsconfig.json' 'ui/vite.config.ts' 'ui/embed.go' 'ui/.*\.test\.' '\.map$'; do
+		if printf '%s\n' "$package_members" | grep -qE "$pattern"; then
+			fail "$spk: package.tgz leaks $pattern"
+		fi
+	done
+
 	tar xzf "$work/package.tgz" -C "$work" ./ui/config 2>/dev/null || tar xzf "$work/package.tgz" -C "$work" ui/config
 	ui_config="$work/ui/config"
 	[ -f "$ui_config" ] || fail "$spk: package.tgz is missing ui/config"

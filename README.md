@@ -79,9 +79,23 @@
 
 ```sh
 go vet ./... && go test ./...          # 静态检查与单元测试
-scripts/build-spk.sh --arch all        # 构建三个架构的 SPK
+scripts/build-spk.sh --arch all        # 构建三个架构的 SPK（会先构建界面）
 scripts/check-spk.sh dist/*.spk        # 校验 SPK 结构
 ```
+
+界面是构建产物，守护进程用 `go:embed` 内嵌 `ui/dist/`，所以改界面后必须重新构建它，
+否则 Go 侧编译或运行到的仍是上一次的产物：
+
+```sh
+cd ui
+npm ci
+npm test                               # 组件与工具函数测试（vitest）
+npm run dev                            # 本地开发，接口默认指向同源
+npm run build                          # 产出 ui/dist/，提交进仓库供 go:embed 使用
+```
+
+`ui/dist/` 之所以提交，是因为内嵌发生在编译期：只装 Go 工具链的人也要能构建出可用的
+守护进程。改动界面源码后请一并提交重新构建的 `ui/dist/`。
 
 在没有 DSM 的机器上调试（仅当设置了 `ETP_DEV_ROOT` 时下列变量才会生效）：
 
@@ -98,7 +112,7 @@ DSM 上生效。
 
 ```sh
 for n in 16 24 32 48 64 72 256; do
-	rsvg-convert -w $n -h $n -o ui/images/app_$n.png ../easytier-console/web/public/favicon.svg
+	rsvg-convert -w $n -h $n -o ui/public/images/app_$n.png ../easytier-console/web/public/favicon.svg
 done
 rsvg-convert -w 64 -h 64 -o spk/icons/PACKAGE_ICON.PNG ../easytier-console/web/public/favicon.svg
 rsvg-convert -w 256 -h 256 -o spk/icons/PACKAGE_ICON_256.PNG ../easytier-console/web/public/favicon.svg
@@ -114,5 +128,5 @@ rsvg-convert -w 256 -h 256 -o spk/icons/PACKAGE_ICON_256.PNG ../easytier-console
 |`internal/runtime`|`easytier-core` 监督、运行时下载与事务化更新、连接切换|
 |`internal/httpserver`|本机 REST API 与静态界面|
 |`internal/dsmenv`|DSM 会话校验|
-|`ui/`|静态界面（原生 ES Module，无构建步骤）|
+|`ui/`|管理界面（Vue 3 + TypeScript + Vite；`npm run build` 产物提交在 `ui/dist/`，因为守护进程用 `go:embed` 内嵌它）|
 |`spk/`|套件元数据、脚本与 nginx 注入配置|

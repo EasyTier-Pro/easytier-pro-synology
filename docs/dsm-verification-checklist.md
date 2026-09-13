@@ -187,5 +187,5 @@ override 仍为 `{"no_tun":true}`；换一个新 key 才真正生效。
 `release.Stable.Artifacts`（`internal/runtime/download.go` 中 `downloadRun` 与 `releaseArtifact`）。
 因此只要请求的版本不是稳定版，校验和就对不上，更新必然失败——除非两个版本的产物字节完全相同。
 
-仅通过直接调用本机 API 才会触发：界面上的更新按钮不传版本号（`ui/pages/overview.js`）。
+仅通过直接调用本机 API 才会触发：界面上的更新按钮不传版本号（`ui/src/views/OverviewView.vue`）。
 与运行时归档缓存无关（校验失败时不会写入缓存），是本次改动之前就存在的问题。

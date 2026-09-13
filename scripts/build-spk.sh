@@ -39,6 +39,22 @@ go_env_for_arch() {
 	esac
 }
 
+# The interface is a bundled build, not a set of source files, so it is produced
+# once for every architecture and only then copied into each package.
+build_ui() {
+	echo "building the interface"
+	(
+		cd "$ROOT/ui"
+		if [ -f package-lock.json ]; then
+			npm ci --no-audit --no-fund
+		else
+			npm install --no-audit --no-fund
+		fi
+		npm run build
+	)
+	[ -f "$ROOT/ui/dist/index.html" ] || { echo "the interface build produced no index.html" >&2; exit 1; }
+}
+
 build_variant() {
 	arch="$1"
 	env_pair="$(go_env_for_arch "$arch")" || { echo "unsupported arch: $arch" >&2; exit 1; }
@@ -57,17 +73,12 @@ build_variant() {
 			-o "$work/package/bin/easytier-pro-dsm" ./cmd/easytier-pro-dsm
 	)
 
-	# Static interface, without the Go source file that embeds it and without
-	# the browser test harness, which is development-only.
-	(
-		cd "$ROOT/ui"
-		find . -type f ! -name 'embed.go' ! -name '*.test.mjs' ! -name 'testdom.mjs' -print \
-			| while IFS= read -r file; do
-			target="$work/package/ui/${file#./}"
-			mkdir -p "$(dirname "$target")"
-			cp "$file" "$target"
-		done
-	)
+	# The built interface: the bundle the daemon and nginx serve. DSM's menu
+	# entry and nginx both address ui/index.html, which the build produces at the
+	# root of dist/.
+	# The build output already contains the DSM application icons, which are
+	# taken from the interface's public directory.
+	cp -R "$ROOT/ui/dist/." "$work/package/ui/"
 	cp "$ROOT/spk/package/ui/config" "$work/package/ui/config"
 	cp "$ROOT/spk/nginx/easytier-pro.conf" "$work/package/nginx/easytier-pro.conf"
 
@@ -97,6 +108,7 @@ build_variant() {
 }
 
 mkdir -p "$OUT"
+build_ui
 case "$ARCH" in
 	all)
 		build_variant x86_64

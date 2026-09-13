@@ -1,2 +1,6 @@
-dist/
+# The packages built by scripts/build-spk.sh.
+/dist/
 .dev/
+
+# The interface's dependencies are installed, never committed.
+ui/node_modules/

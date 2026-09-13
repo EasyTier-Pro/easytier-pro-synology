@@ -1,0 +1,279 @@
+/* Base layout for the interface. Naive UI supplies the component styling; this
+   file only owns the shell (page background, header, content width) and the few
+   pieces of text styling the pages share. */
+
+:root {
+	--etp-content-width: 1120px;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+	height: 100%;
+}
+
+body {
+	margin: 0;
+	font-family: v-sans, -apple-system, "Segoe UI", "Helvetica Neue", "PingFang SC",
+		"Microsoft YaHei", sans-serif;
+	-webkit-font-smoothing: antialiased;
+}
+
+.etp-shell {
+	min-height: 100%;
+	display: flex;
+	flex-direction: column;
+}
+
+.etp-header {
+	position: sticky;
+	top: 0;
+	z-index: 10;
+	display: flex;
+	align-items: center;
+	gap: 20px;
+	padding: 12px 22px;
+	border-bottom: 1px solid var(--n-border-color, rgba(128, 128, 128, 0.24));
+	background: var(--n-color, transparent);
+	backdrop-filter: saturate(180%) blur(12px);
+}
+
+.etp-brand {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+}
+
+.etp-brand-mark {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 34px;
+	height: 34px;
+	border-radius: 9px;
+	background: var(--n-color-target, #18a058);
+	color: #fff;
+	font-weight: 700;
+	font-size: 14px;
+	letter-spacing: 0.02em;
+	flex: none;
+}
+
+.etp-brand-text {
+	min-width: 0;
+}
+
+.etp-brand-text h1 {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+	line-height: 1.3;
+}
+
+.etp-brand-text p {
+	margin: 0;
+	font-size: 12px;
+	opacity: 0.6;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.etp-nav {
+	display: flex;
+	gap: 4px;
+	margin-left: auto;
+	flex-wrap: wrap;
+}
+
+.etp-nav-link {
+	padding: 6px 14px;
+	border-radius: 8px;
+	font-size: 14px;
+	text-decoration: none;
+	color: inherit;
+	opacity: 0.72;
+	transition: background-color 0.15s ease, opacity 0.15s ease;
+	white-space: nowrap;
+}
+
+.etp-nav-link:hover {
+	background: rgba(128, 128, 128, 0.14);
+	opacity: 1;
+}
+
+.etp-nav-link.is-active {
+	background: var(--n-color-target, #18a058);
+	color: #fff;
+	opacity: 1;
+}
+
+.etp-main {
+	flex: 1;
+	width: 100%;
+	max-width: var(--etp-content-width);
+	margin: 0 auto;
+	padding: 20px 22px 56px;
+}
+
+.etp-stack {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.etp-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px;
+}
+
+.etp-spread {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.etp-mono {
+	font-family: v-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 12px;
+	word-break: break-all;
+}
+
+.etp-muted {
+	opacity: 0.66;
+}
+
+.etp-paragraph {
+	margin: 0;
+	line-height: 1.7;
+}
+
+.etp-paragraph + .etp-paragraph {
+	margin-top: 8px;
+}
+
+/* Log output keeps its own dark surface in both themes: it is diagnostic text,
+   and a fixed background is easier to read than one that follows the theme. */
+.etp-log-output {
+	margin: 0;
+	padding: 14px;
+	max-height: 460px;
+	overflow: auto;
+	border-radius: 8px;
+	background: #16181d;
+	color: #d7e0e8;
+	font-family: v-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 12px;
+	line-height: 1.6;
+	white-space: pre-wrap;
+	word-break: break-all;
+}
+
+.etp-step-list {
+	margin: 0;
+	padding-left: 20px;
+	line-height: 1.9;
+}
+
+.etp-choice {
+	display: flex;
+	gap: 10px;
+	align-items: flex-start;
+	padding: 10px 12px;
+	border: 1px solid var(--n-border-color, rgba(128, 128, 128, 0.24));
+	border-radius: 8px;
+	cursor: pointer;
+	transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.etp-choice:hover {
+	border-color: var(--n-color-target, #18a058);
+}
+
+.etp-choice + .etp-choice {
+	margin-top: 8px;
+}
+
+.etp-choice-hint {
+	display: block;
+	opacity: 0.66;
+	font-size: 12px;
+	margin-top: 2px;
+}
+
+.etp-command {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	flex-wrap: wrap;
+}
+
+.etp-command code {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding: 6px 10px;
+	border-radius: 6px;
+	background: rgba(128, 128, 128, 0.14);
+	font-family: v-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 12px;
+	word-break: break-all;
+}
+
+.etp-fade-enter-active,
+.etp-fade-leave-active {
+	transition: opacity 0.18s ease;
+}
+
+.etp-fade-enter-from,
+.etp-fade-leave-to {
+	opacity: 0;
+}
+
+/* Data tables: compact rows, since the pages show a handful of dense records. */
+.etp-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 13px;
+}
+
+.etp-table th,
+.etp-table td {
+	padding: 9px 10px;
+	text-align: left;
+	vertical-align: middle;
+	border-bottom: 1px solid var(--n-border-color, rgba(128, 128, 128, 0.24));
+}
+
+.etp-table th {
+	font-weight: 600;
+	font-size: 12px;
+	opacity: 0.66;
+	white-space: nowrap;
+}
+
+.etp-table tbody tr:last-child td {
+	border-bottom: none;
+}
+
+.etp-table td:last-child {
+	white-space: nowrap;
+}
+
+.etp-table th:first-child,
+.etp-table td:first-child {
+	padding-left: 0;
+}
+
+.etp-table th:last-child,
+.etp-table td:last-child {
+	padding-right: 0;
+}
