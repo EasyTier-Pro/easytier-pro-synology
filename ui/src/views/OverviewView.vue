@@ -33,6 +33,11 @@ const router = useRouter()
 const timerScope = createTimerScope()
 const { after } = timerScope
 
+// Declared before the watchers below, because an immediate watcher starts the
+// install poll during setup.
+let downloadPolling = false
+let disposed = false
+
 // Every region loads on its own, so an action can refresh just the part it
 // changed and the rest of the page keeps what it is showing. The resources are
 // shared between pages, so opening this one renders from the last read instead
@@ -49,6 +54,11 @@ const enrollmentOptions = ref<EnrollmentOptions | null>(null)
 const enrollmentLoading = ref(false)
 
 const loggedIn = computed(() => Boolean(auth.data.value?.logged_in))
+
+// A read that fails while earlier data is still on screen. The data is kept -
+// it is the last known state and better than an empty page - but the failure has
+// to be visible, and an expired DSM session has to be renewable from here.
+const sessionFailure = computed(() => status.error.value || auth.error.value)
 const origin = window.location.origin
 const current = computed(() => status.data.value)
 
@@ -168,16 +178,17 @@ async function refresh(...kinds: Array<'status' | 'auth' | 'download' | 'summary
 
 // The running screen needs the runtime summary and the network list, and they
 // are only meaningful once the core is up.
+// The running screen's regions are reloaded whenever that screen is reached,
+// including when it is already the current one as the page mounts: the shared
+// status may be cached from an earlier visit, in which case there is no
+// transition to watch for and the regions would never be read. Reloading keeps
+// the previous values visible, so this costs no flicker.
 watch(screen, (value) => {
 	if (value === 'running') {
-		if (!summary.settled.value) {
-			void summary.reload()
-		}
-		if (!networks.settled.value) {
-			void networks.reload()
-		}
+		void summary.reload()
+		void networks.reload()
 	}
-})
+}, { immediate: true })
 
 // Polling has to follow both the screen and the download state: they arrive from
 // two requests, so a page opened while an install is already running would
@@ -187,29 +198,49 @@ watch(followDownload, (active) => {
 	if (active) {
 		pollDownload()
 	}
-})
+}, { immediate: true })
 
-let downloadPolling = false
-
-/** pollDownload follows an install in the background while this page is open. */
+/**
+ * pollDownload follows an install in the background while this page is open.
+ *
+ * Every continuation checks `disposed` first: the timer scope abandons scheduled
+ * work, but a request already in flight still resolves, and continuing from it
+ * would schedule the next tick into the new mount's generation and poll forever
+ * on a page nobody is looking at.
+ */
 function pollDownload(): void {
-	if (downloadPolling) {
+	if (downloadPolling || disposed) {
 		return
 	}
 	downloadPolling = true
+	const stop = (): void => {
+		downloadPolling = false
+	}
 	const tick = (): void => {
+		if (disposed) {
+			stop()
+			return
+		}
 		api.downloadStatus().then((value) => {
+			if (disposed) {
+				stop()
+				return
+			}
 			download.set(value)
 			if (value.state === 'queued' || value.state === 'running') {
 				after(1500, tick)
 				return
 			}
-			downloadPolling = false
+			stop()
 			if (value.state === 'completed') {
 				notify('运行时安装完成。', 'success')
 				void refresh('status', 'auth')
 			}
 		}).catch(() => {
+			if (disposed) {
+				stop()
+				return
+			}
 			// 状态查询失败时继续稍后重试，安装本身在后台进行。
 			after(3000, tick)
 		})
@@ -387,12 +418,30 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+	disposed = true
 	timerScope.invalidate()
 })
 </script>
 
 <template>
 	<div class="etp-stack">
+		<!-- A refresh failed while earlier data is still shown. -->
+		<StatusBanner
+			v-if="sessionFailure && screen !== 'unavailable'"
+			:type="needsRelogin(sessionFailure) ? 'warning' : 'error'"
+		>
+			<p v-if="needsRelogin(sessionFailure)" class="etp-paragraph">
+				本机与 DSM 的登录会话已失效，暂时无法刷新，下面显示的是最后一次读取到的状态。
+			</p>
+			<p v-else class="etp-paragraph">
+				{{ messageOf(sessionFailure) }}。下面显示的是最后一次读取到的状态。
+			</p>
+			<n-space>
+				<n-button type="primary" tag="a" href="/webman/index.cgi" target="_blank">重新登录 DSM</n-button>
+				<n-button @click="refresh('status', 'auth', 'download')">重试</n-button>
+			</n-space>
+		</StatusBanner>
+
 		<!-- Unavailable: the daemon could not be asked, which is usually the DSM session. -->
 		<template v-if="screen === 'unavailable'">
 			<SectionCard

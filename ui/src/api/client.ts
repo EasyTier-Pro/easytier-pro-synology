@@ -119,7 +119,12 @@ export const api = {
 	authStatus: () => request<AuthStatus>('api/auth/status'),
 	authStart: () => request<AuthStartPayload>('api/auth/device/start', { method: 'POST' }),
 	authPoll: () => request<AuthPollPayload>('api/auth/device/poll', { method: 'POST' }),
-	authMe: () => request<AccountPayload>('api/auth/me'),
+	// The daemon wraps the Console's own answer under "account", so the envelope
+	// is unwrapped here rather than in every caller.
+	authMe: async (): Promise<AccountPayload> => {
+		const result = await request<{ account?: AccountPayload }>('api/auth/me')
+		return result.account || {}
+	},
 	authLogout: () => request<Envelope>('api/auth/logout', { method: 'POST' }),
 	enrollmentOptions: (workspace: string) => request<EnrollmentOptions>(
 		`api/workspaces/${encodeURIComponent(workspace)}/enrollment-options`),

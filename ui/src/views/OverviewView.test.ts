@@ -2,7 +2,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import OverviewView from './OverviewView.vue'
-import { resetShared } from '@/stores/resources'
+import { resetShared, shared } from '@/stores/resources'
+import { ApiError } from '@/api/errors'
 import type { Status } from '@/api/types'
 
 // The API and the notification surface are the two things this view talks to, so
@@ -71,6 +72,18 @@ function router() {
 	})
 }
 
+// Views mounted by a test, unmounted after it. Leaving one mounted keeps its
+// polling alive into later cases, which makes their call counts meaningless.
+const mountedViews: Array<{ unmount: () => void }> = []
+
+function leaveView(view: { unmount: () => void }): void {
+	const index = mountedViews.indexOf(view)
+	if (index >= 0) {
+		mountedViews.splice(index, 1)
+	}
+	view.unmount()
+}
+
 interface MountOptions {
 	status?: Partial<Status>
 	loggedIn?: boolean
@@ -81,6 +94,13 @@ interface MountOptions {
 	download?: unknown
 	/** Delays the download answer, so the two initial requests settle apart. */
 	downloadDelayMs?: number
+	/** Takes over the download reads entirely, for tests that hold one open. */
+	downloadImpl?: () => Promise<unknown>
+	/**
+	 * Pre-seeds the shared resources the way an earlier visit would have, so the
+	 * page mounts with a cached status and no screen transition to observe.
+	 */
+	seed?: (resources: ReturnType<typeof shared>) => Promise<void>
 }
 
 async function mountView(options: MountOptions = {}) {
@@ -88,7 +108,9 @@ async function mountView(options: MountOptions = {}) {
 	apiMock.status.mockResolvedValue({ ...baseStatus, ...status })
 	apiMock.authStatus.mockResolvedValue({ logged_in: loggedIn })
 	const downloadAnswer = options.download ?? { state: 'idle', phase: '', percent: 0 }
-	if (options.downloadDelayMs) {
+	if (options.downloadImpl) {
+		apiMock.downloadStatus.mockImplementation(options.downloadImpl)
+	} else if (options.downloadDelayMs) {
 		// The screen is chosen from `status`; a slower download answer reproduces
 		// the order a real install produces when the page is opened mid-install.
 		apiMock.downloadStatus.mockImplementation(() => new Promise((resolve) => {
@@ -104,6 +126,9 @@ async function mountView(options: MountOptions = {}) {
 			node: { ipv4_addr: '10.0.0.2' }, peers: [], interfaces: [ 'tun0' ],
 		})
 	}
+	if (options.seed) {
+		await options.seed(shared())
+	}
 	if (options.networksError) {
 		apiMock.networks.mockRejectedValue(options.networksError)
 	} else {
@@ -115,6 +140,7 @@ async function mountView(options: MountOptions = {}) {
 	const instance = mount(OverviewView, {
 		global: { plugins: [ router() ] },
 	})
+	mountedViews.push(instance)
 	await flushPromises()
 	return instance
 }
@@ -299,6 +325,103 @@ describe('overview region updates', () => {
 		expect(notifyMock).toHaveBeenCalledWith('操作已完成。', 'success')
 	})
 
+	// The blocker this guards: the running screen's regions were loaded only when
+	// the screen *changed*, so a page whose shared status was already cached had no
+	// transition to observe and its network list never loaded at all - it spun
+	// forever with no button to recover.
+	it('loads the running regions when the page opens with a cached status', async () => {
+		const wrapper = await mountView({
+			seed: async (resources) => {
+				// A previous visit already read the status, so the screen is
+				// 'running' from the very first render.
+				await resources.status.reload()
+			},
+			networks: {
+				machine_id: 'm1',
+				machine: { networks: [] },
+				networks: [ { id: 'n1', name: '办公网', ipv4_cidr: '10.10.0.0/24' } ],
+				enrolled: true,
+			},
+		})
+
+		expect(wrapper.text()).not.toContain('正在读取网络列表…')
+		expect(wrapper.text()).toContain('办公网')
+	})
+
+	// The same shape for the install poll: with both the screen and the download
+	// state cached, a page reopened mid-install froze at the cached percentage.
+	it('follows an install when the page opens with everything cached', async () => {
+		await mountView({
+			seed: async (resources) => {
+				await resources.status.reload()
+				await resources.download.reload()
+			},
+			status: { core_installed: false, cli_installed: false, running: false },
+			download: { state: 'running', phase: 'download', percent: 40 },
+		})
+		const afterMount = apiMock.downloadStatus.mock.calls.length
+
+		await new Promise((resolve) => setTimeout(resolve, 1700))
+		await flushPromises()
+
+		expect(apiMock.downloadStatus.mock.calls.length).toBeGreaterThan(afterMount)
+	})
+
+	// Leaving the page must stop the install poll for good. The timer scope
+	// abandons scheduled work, but a request already in flight still answers, and
+	// continuing from that answer schedules the next tick into the new mount's
+	// generation - so the poll would run on with nobody looking at it.
+	it('stops following an install once the page is left', async () => {
+		// The first read answers so the page reaches the runtime screen; every
+		// later one is held open, so the page can be left with a query in flight.
+		const pending: Array<(value: unknown) => void> = []
+		let calls = 0
+
+		await mountView({
+			status: { core_installed: false, cli_installed: false, running: false },
+			downloadImpl: () => {
+				calls += 1
+				if (calls === 1) {
+					return Promise.resolve({ state: 'running', phase: 'download', percent: 10 })
+				}
+				return new Promise((resolve) => { pending.push(resolve) })
+			},
+		})
+
+		// Wait for the poll to issue its query, which stays unanswered.
+		const deadline = Date.now() + 6000
+		while (pending.length === 0 && Date.now() < deadline) {
+			await new Promise((resolve) => setTimeout(resolve, 50))
+		}
+		expect(pending).toHaveLength(1)
+		const issued = calls
+		leaveView(mountedViews[mountedViews.length - 1])
+
+		// The answer arrives after the page is gone; it must not start another.
+		pending.shift()!({ state: 'running', phase: 'download', percent: 20 })
+		await new Promise((resolve) => setTimeout(resolve, 2000))
+
+		expect(calls).toBe(issued)
+	}, 20000)
+
+	// A read that fails after earlier data was shown must say so, otherwise an
+	// expired DSM session cannot be renewed without reloading the browser page.
+	it('reports an expired session even while showing the last known state', async () => {
+		const wrapper = await mountView({
+			seed: async (resources) => {
+				// The first read succeeds and is kept...
+				await resources.status.reload()
+				// ...and every read after it fails the way an expired session does.
+				apiMock.status.mockRejectedValue(new ApiError('dsm_auth_required'))
+			},
+		})
+
+		// The old data is still there and the failure is stated with a way out.
+		expect(wrapper.text()).toContain('连接状态')
+		expect(wrapper.text()).toContain('DSM 的登录会话已失效')
+		expect(wrapper.text()).toContain('重新登录 DSM')
+	})
+
 	// A component used in a template without being imported renders as an unknown
 	// element, which produces a page that looks broken but raises no error. This
 	// checks the whole view instead of trusting each file's imports.
@@ -309,4 +432,16 @@ describe('overview region updates', () => {
 			.filter((tag) => tag.startsWith('n-'))
 		expect(unresolved).toEqual([])
 	})
+})
+
+// Every view a case mounted is unmounted here, so no polling survives into the
+// next case and the call counts stay meaningful.
+afterEach(() => {
+	while (mountedViews.length > 0) {
+		try {
+			mountedViews.pop()!.unmount()
+		} catch {
+			// The case already unmounted it.
+		}
+	}
 })

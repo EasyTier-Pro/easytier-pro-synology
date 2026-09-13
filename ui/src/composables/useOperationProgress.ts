@@ -1,5 +1,5 @@
 import { h, ref } from 'vue'
-import { dialog } from '@/naive'
+import { dialog, notify } from '@/naive'
 import { api } from '@/api/client'
 import { messageOf } from '@/api/errors'
 import { operationMessage } from '@/utils/phases'
@@ -120,8 +120,10 @@ export function showOperationProgress(
 		},
 		failed: (operation) => {
 			instance.destroy()
-			// A failed status query has no message of its own, so the outcome
-			// callback is still given the chance to refresh the page.
+			// The operation is over and the dialog is gone, so the failure has to
+			// be said out loud: it covers both a change the daemon refused and a
+			// progress query that could not be read to the end.
+			notify(operation.message || '操作失败，请重试。', 'error')
 			if (outcome.failed) {
 				outcome.failed(operation)
 			}

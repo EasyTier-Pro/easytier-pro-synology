@@ -160,6 +160,18 @@ onMounted(async () => {
 
 		<template v-else>
 			<SectionCard title="网络" description="选择一个网络以查看其中的节点。本页面为只读，加入或退出网络请在「概览」页面操作。">
+				<StatusBanner v-if="networks.error.value" type="warning">
+					<template v-if="needsRelogin(networks.error.value)">
+						DSM 登录会话已失效，暂时无法刷新网络列表，下面是最后一次读取到的内容。
+					</template>
+					<template v-else>
+						无法刷新网络列表：{{ messageOf(networks.error.value) }}。下面是最后一次读取到的内容。
+					</template>
+				</StatusBanner>
+				<n-space v-if="networks.error.value">
+					<n-button type="primary" tag="a" href="/webman/index.cgi" target="_blank">重新登录 DSM</n-button>
+					<n-button @click="networks.reload()">重试</n-button>
+				</n-space>
 				<div class="etp-row">
 					<label class="etp-field">
 						<span class="etp-field-label">网络</span>

@@ -28,7 +28,7 @@ export function nodeName(node?: { hostname?: string; display_name?: string; id?:
 	if (!node) {
 		return '未命名节点'
 	}
-	return node.hostname || node.display_name || node.id || node.machine_id || '未命名节点'
+	return node.display_name || node.hostname || node.machine_id || node.id || '未命名节点'
 }
 
 /** enrollmentKeyName renders one enrollment key for a choice list. */
