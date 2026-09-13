@@ -1,0 +1,32 @@
+{
+	"web-config": {
+		"nginx-static-config": {
+			"enable": [
+				{
+					"type": "dsm",
+					"relpath": "nginx/easytier-pro.conf",
+					"ports": [
+						{
+							"port": 15890,
+							"protocol": "tcp",
+							"schema": "http"
+						}
+					]
+				}
+			],
+			"disable": [
+				{
+					"type": "dsm",
+					"relpath": "nginx/easytier-pro.conf",
+					"ports": [
+						{
+							"port": 15890,
+							"protocol": "tcp",
+							"schema": "http"
+						}
+					]
+				}
+			]
+		}
+	}
+}

@@ -1,0 +1,12 @@
+{
+	".url": {
+		"SYNO.SDS.EasyTierPro": {
+			"type": "url",
+			"icon": "images/app_{0}.png",
+			"title": "EasyTier Pro",
+			"desc": "把本机接入 EasyTier Console 的虚拟网络",
+			"url": "3rdparty/easytier-pro/index.html",
+			"allUsers": false
+		}
+	}
+}

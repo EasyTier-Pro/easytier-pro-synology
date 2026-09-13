@@ -1,0 +1,7 @@
+#!/bin/sh
+# Stop the daemon so that no EasyTier core keeps running after removal.
+
+SCRIPTS_DIR="$(dirname "$SYNOPKG_PKGDEST")/scripts"
+"$SCRIPTS_DIR/start-stop-status" stop >/dev/null 2>&1 || true
+
+exit 0

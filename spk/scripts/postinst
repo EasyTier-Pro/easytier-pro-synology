@@ -1,0 +1,4 @@
+#!/bin/sh
+# Nothing to do after installation: the daemon creates its own state tree.
+
+exit 0

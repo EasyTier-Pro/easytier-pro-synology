@@ -1,0 +1,8 @@
+#!/bin/sh
+# Stop the running daemon before the package files are replaced. State under
+# SYNOPKG_PKGVAR is kept by DSM and survives the upgrade.
+
+SCRIPTS_DIR="$(dirname "$SYNOPKG_PKGDEST")/scripts"
+"$SCRIPTS_DIR/start-stop-status" stop >/dev/null 2>&1 || true
+
+exit 0

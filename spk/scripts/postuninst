@@ -1,0 +1,9 @@
+#!/bin/sh
+# Remove everything this client stored: enrollment token, Console session,
+# machine identity, downloaded runtime and logs.
+
+for sub in state runtime logs run; do
+	rm -rf "$SYNOPKG_PKGVAR/$sub"
+done
+
+exit 0

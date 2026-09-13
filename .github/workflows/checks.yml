@@ -1,0 +1,27 @@
+name: checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+      - name: Check shell scripts
+        run: |
+          for script in spk/scripts/* scripts/*.sh; do
+            sh -n "$script"
+          done
+      - name: Build packages
+        run: scripts/build-spk.sh --arch all
+      - name: Check packages
+        run: scripts/check-spk.sh dist/easytier-pro-*.spk

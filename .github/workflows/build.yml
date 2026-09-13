@@ -1,0 +1,28 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  spk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build SPK packages
+        run: scripts/build-spk.sh --arch all
+      - name: Verify SPK packages
+        run: scripts/check-spk.sh dist/easytier-pro-*.spk
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: easytier-pro-spk
+          if-no-files-found: error
+          path: |
+            dist/easytier-pro-x86_64-*.spk
+            dist/easytier-pro-armv8-*.spk
+            dist/easytier-pro-armv7-*.spk

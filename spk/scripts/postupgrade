@@ -1,0 +1,5 @@
+#!/bin/sh
+# The previous configuration, machine identity and runtime live in
+# SYNOPKG_PKGVAR and are reused as-is after an upgrade.
+
+exit 0

@@ -1,0 +1,21 @@
+#!/bin/sh
+# Refuse to install without enough room for the runtime and its downloads.
+
+MIN_FREE_KB=204800
+SCRIPTS_DIR="$(dirname "$SYNOPKG_PKGDEST")/scripts"
+
+target_volume="$(printf '%s' "$SYNOPKG_PKGVAR" | awk -F/ 'NF > 1 { print "/" $2 }')"
+available_kb="$(df -Pk "$target_volume" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+case "$available_kb" in
+	''|*[!0-9]*) available_kb=0 ;;
+esac
+
+if [ "$available_kb" -lt "$MIN_FREE_KB" ]; then
+	echo "可用空间不足：需要 200 MB，当前 $((available_kb / 1024)) MB。" >&2
+	exit 1
+fi
+
+mkdir -p "$SYNOPKG_PKGVAR/logs" "$SYNOPKG_PKGVAR/run" || exit 1
+chmod 700 "$SYNOPKG_PKGVAR" 2>/dev/null || true
+
+exit 0

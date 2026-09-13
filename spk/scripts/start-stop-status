@@ -1,0 +1,76 @@
+#!/bin/sh
+# Package lifecycle script. `status` exits 0 while the daemon runs and 3 when it
+# does not, which is what DSM expects for precheckstartstop.
+
+DAEMON="$SYNOPKG_PKGDEST/bin/easytier-pro-dsm"
+PID_FILE="$SYNOPKG_PKGVAR/run/daemon.pid"
+LOG_FILE="$SYNOPKG_PKGVAR/logs/daemon.log"
+
+daemon_pid() {
+	[ -r "$PID_FILE" ] || return 1
+	pid="$(cat "$PID_FILE" 2>/dev/null)"
+	case "$pid" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	kill -0 "$pid" 2>/dev/null || return 1
+	printf '%s' "$pid"
+}
+
+start_daemon() {
+	if daemon_pid >/dev/null; then
+		return 0
+	fi
+	[ -x "$DAEMON" ] || return 1
+	mkdir -p "$SYNOPKG_PKGVAR/run" "$SYNOPKG_PKGVAR/logs" || return 1
+	rm -f "$PID_FILE"
+	setsid "$DAEMON" supervise >>"$LOG_FILE" 2>&1 </dev/null &
+	attempt=0
+	while [ "$attempt" -lt 15 ]; do
+		daemon_pid >/dev/null && return 0
+		sleep 1
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+
+stop_daemon() {
+	pid="$(daemon_pid)" || {
+		rm -f "$PID_FILE"
+		return 0
+	}
+	kill "$pid" 2>/dev/null || true
+	attempt=0
+	while [ "$attempt" -lt 20 ]; do
+		kill -0 "$pid" 2>/dev/null || break
+		sleep 1
+		attempt=$((attempt + 1))
+	done
+	if kill -0 "$pid" 2>/dev/null; then
+		kill -9 "$pid" 2>/dev/null || true
+		sleep 1
+	fi
+	rm -f "$PID_FILE"
+	return 0
+}
+
+case "$1" in
+	start|prestart)
+		start_daemon || {
+			echo "EasyTier Pro 启动失败。" >&2
+			exit 1
+		}
+		exit 0
+		;;
+	stop|prestop)
+		stop_daemon
+		exit 0
+		;;
+	status)
+		daemon_pid >/dev/null && exit 0
+		exit 3
+		;;
+	*)
+		echo "用法: $0 {start|stop|status}" >&2
+		exit 1
+		;;
+esac
