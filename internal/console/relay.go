@@ -100,16 +100,29 @@ func (c *Client) nodeIDForMachine(ctx context.Context, workspaceID, networkID, m
 	return "", nil
 }
 
-// SetNodeNoTun turns relay mode on or off for this machine's node in one
-// network. It reports whether the Console setting had to be changed.
+// NodeMode is the configuration this device needs on the Console.
+//
+// Both settings exist because of capabilities the package cannot hold, and each
+// one removes a different requirement:
+//
+//   - NoTun keeps the core from creating a virtual interface (CAP_NET_ADMIN).
+//   - DisableBindDevice keeps it from binding its sockets to an interface
+//     (CAP_NET_RAW). Without it the core fails every peer connection, so the
+//     node registers and looks online while its peer list stays empty.
+type NodeMode struct {
+	NoTun             bool
+	DisableBindDevice bool
+}
+
+// SetNodeMode makes the Console's node override match the requested mode. It
+// reports whether anything had to change.
 //
 // The Console builds the runtime configuration of a node from the network
-// defaults merged with the node's own override, and no_tun is part of that
-// projection: the core itself cannot be told to run without a TUN device on
-// the command line, because in secure mode the instance configuration comes
-// from the Console. Making the device a relay therefore means changing this
-// setting on the Console.
-func (c *Client) SetNodeNoTun(ctx context.Context, networkID string, enabled bool) (bool, *apperr.Error) {
+// defaults merged with the node's own override, and both settings are part of
+// that projection. The core cannot be told any of this on its command line,
+// because in secure mode its instances come from the Console, so the settings
+// have to be written here.
+func (c *Client) SetNodeMode(ctx context.Context, networkID string, mode NodeMode) (bool, *apperr.Error) {
 	if !config.ValidUUID(networkID) {
 		return false, apperr.New(apperr.CodeInvalidNetwork)
 	}
@@ -150,14 +163,13 @@ func (c *Client) SetNodeNoTun(ctx context.Context, networkID string, enabled boo
 	if override == nil {
 		override = map[string]any{}
 	}
-	current, _ := override["no_tun"].(bool)
-	if current == enabled {
+	// The two settings have opposite defaults in the core: no_tun is off unless
+	// asked for, bind_device is on unless turned off. Each is therefore written
+	// as an explicit override only when it differs from its default.
+	changed := setOverrideBool(override, "no_tun", mode.NoTun, false)
+	changed = setOverrideBool(override, "bind_device", !mode.DisableBindDevice, true) || changed
+	if !changed {
 		return false, nil
-	}
-	if enabled {
-		override["no_tun"] = true
-	} else {
-		delete(override, "no_tun")
 	}
 	body, err := json.Marshal(override)
 	if err != nil {
@@ -165,7 +177,7 @@ func (c *Client) SetNodeNoTun(ctx context.Context, networkID string, enabled boo
 	}
 	status, _, aerr = c.request(ctx, http.MethodPut,
 		tenantPath(workspaceID, "/nodes/"+nodeID+"/config"), body, "application/json",
-		newIdempotencyKey("relay", machineID, networkID))
+		newIdempotencyKey("mode", machineID, networkID))
 	if aerr != nil {
 		return false, aerr
 	}
@@ -173,4 +185,26 @@ func (c *Client) SetNodeNoTun(ctx context.Context, networkID string, enabled boo
 		return false, apperr.New(apperr.CodeRelayModeFailed)
 	}
 	return true, nil
+}
+
+// setOverrideBool sets one boolean override so that the node's effective value
+// becomes value, given what the core defaults that setting to. The key is kept
+// only when it has to override that default, and the function reports whether
+// the override changed at all - a request that changes nothing must not rewrite
+// the Console configuration.
+func setOverrideBool(override map[string]any, key string, value, coreDefault bool) bool {
+	current, present := override[key].(bool)
+	if present {
+		if current == value {
+			return false
+		}
+	} else if value == coreDefault {
+		return false
+	}
+	if value == coreDefault {
+		delete(override, key)
+	} else {
+		override[key] = value
+	}
+	return true
 }

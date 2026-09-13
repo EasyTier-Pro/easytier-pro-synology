@@ -2,9 +2,11 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/EasyTier-Pro/easytier-pro-dsm/internal/apperr"
+	"github.com/EasyTier-Pro/easytier-pro-dsm/internal/console"
 )
 
 // relaySyncTimeout bounds the Console round trips of one relay-mode sync. It is
@@ -26,14 +28,22 @@ const (
 // without depending on which side made the change.
 const relayWatchInterval = 90 * time.Second
 
-// RelayMode reports whether the local core has to run without a TUN device.
+// NodeMode reports the configuration this device needs on the Console.
 //
-// DSM never runs a package as root, so the downloaded core only obtains
-// CAP_NET_ADMIN when an administrator grants it as a file capability. Without
-// it the core cannot create a tun interface, and the instance configuration the
-// Console pushes has to say so.
-func (m *Manager) RelayMode() bool {
-	return !tunCapable(m.paths.CoreBinary())
+// DSM never runs a package as root, so the downloaded core only gets a
+// capability when an administrator grants it to the binary as a file
+// capability. Each capability the core lacks has to be reflected in the
+// instance configuration the Console pushes, because none of it can be
+// expressed on the core's command line in secure mode.
+func (m *Manager) NodeMode() console.NodeMode {
+	corePath := m.paths.CoreBinary()
+	return console.NodeMode{
+		// Without CAP_NET_ADMIN the core cannot create a virtual interface.
+		NoTun: !tunCapable(corePath),
+		// Without CAP_NET_RAW the core cannot bind its sockets to an
+		// interface, and every peer connection then fails.
+		DisableBindDevice: !bindCapable(corePath),
+	}
 }
 
 // SyncRelayMode tells the Console whether this device must run in relay mode,
@@ -53,7 +63,7 @@ func (m *Manager) SyncRelayMode(ctx context.Context) *apperr.Error {
 	if !m.store.HasBootstrapToken() {
 		return nil
 	}
-	relay := m.RelayMode()
+	mode := m.NodeMode()
 	networks, aerr := m.cli.EnrolledNetworkIDs(ctx)
 	if aerr != nil {
 		return aerr
@@ -63,7 +73,7 @@ func (m *Manager) SyncRelayMode(ctx context.Context) *apperr.Error {
 	// visited in the same order every time, could keep them there forever.
 	var firstError *apperr.Error
 	for _, networkID := range networks {
-		changed, aerr := m.cli.SetNodeNoTun(ctx, networkID, relay)
+		changed, aerr := m.cli.SetNodeMode(ctx, networkID, mode)
 		if aerr != nil {
 			m.log.Errorf("同步网络 %s 的运行模式失败: %s", networkID, aerr.Message)
 			if firstError == nil {
@@ -72,14 +82,25 @@ func (m *Manager) SyncRelayMode(ctx context.Context) *apperr.Error {
 			continue
 		}
 		if changed {
-			if relay {
-				m.log.Printf("本机没有创建虚拟网卡的权限，已把网络 %s 上的本机节点设为无 TUN 模式", networkID)
-			} else {
-				m.log.Printf("本机已获得创建虚拟网卡的权限，已取消网络 %s 上本机节点的无 TUN 模式", networkID)
-			}
+			m.log.Printf("已按本机能力更新网络 %s 上的节点配置：%s", networkID, describeNodeMode(mode))
 		}
 	}
 	return firstError
+}
+
+// describeNodeMode renders the mode for the log.
+func describeNodeMode(mode console.NodeMode) string {
+	parts := make([]string, 0, 2)
+	if mode.NoTun {
+		parts = append(parts, "无 TUN（无 CAP_NET_ADMIN）")
+	}
+	if mode.DisableBindDevice {
+		parts = append(parts, "不绑定网卡（无 CAP_NET_RAW）")
+	}
+	if len(parts) == 0 {
+		return "完整模式"
+	}
+	return strings.Join(parts, "，")
 }
 
 // syncRelayModeQuietly runs SyncRelayMode for callers that must not fail.

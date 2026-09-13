@@ -90,17 +90,17 @@ test('no-TUN notice describes reachability, not isolation', async () => {
 	assert.doesNotMatch(notice, /没有虚拟 IP/, 'the node does have a virtual IP');
 });
 
-// Without CAP_NET_RAW the core cannot bind its sockets to an interface, so it
-// registers but reaches no peer. That has to be reported, because the node
-// otherwise looks healthy while its peer list stays empty.
-test('missing bind capability is reported', async () => {
+// Without CAP_NET_RAW the core cannot bind its sockets to an interface. The
+// daemon handles that by writing the setting on the Console, so the interface
+// has to say it is handled rather than send the operator looking for a shell.
+test('missing bind capability is explained as handled, not as a task', async () => {
 	const root = await renderWith({
 		'api/status': { ...connected, core_installed: true, cli_installed: true, tun_capable: false, bind_capable: false },
 	});
 	const notice = texts(root).join('\n');
 	assert.match(notice, /CAP_NET_RAW/, 'the cause must be named');
-	assert.match(notice, /无法连接任何 peer/, 'the symptom must be named');
-	assert.match(notice, /setcap cap_net_raw\+ep/, 'the fix must be shown');
+	assert.match(notice, /无需任何手工操作/, 'the operator must be told nothing is required');
+	assert.doesNotMatch(notice, /setcap cap_net_raw/, 'no shell command for this case');
 });
 
 test('no warning once the capability is present', async () => {

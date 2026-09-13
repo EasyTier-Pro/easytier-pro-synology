@@ -63,9 +63,10 @@
   本机仍会获得虚拟 IP，其它节点可以主动访问本机（也能经本机虚拟 IP 访问本机上的服务），
   子网路由与中继照常可用；唯一的区别是本机自身没有虚拟网卡，NAS 上的程序无法主动访问网络中的
   其它节点。概览页会显示「无 TUN 模式（用户态转发）」并说明原因。
-  注意：**即使在无 TUN 模式下，节点要连上 peer 仍需要 `CAP_NET_RAW`**——core 默认会把出站
-  socket 绑定到网卡，而 Linux 只允许带该能力的进程这么做；缺少它时节点能注册、显示在线，
-  但 peer 列表始终为空（概览页会给出授权命令）。
+- 连接同样不需要能力：core 默认会把出站 socket 绑定到网卡（需要 `CAP_NET_RAW`），守护进程会
+  在 Console 上为本机节点关闭该绑定（`bind_device = false`）。因此**在无 TUN 模式下本套件不需要
+  任何 capability，也不需要任何 root 操作**。若希望 NAS 本身拥有虚拟网卡（即让 NAS 上的程序能
+  主动访问其它节点），可由管理员可选地授予 `CAP_NET_ADMIN`（`setcap` 命令见概览页）。
 - 需要本机拥有虚拟 IP 时，由管理员一次性授予该文件能力，然后重新启动套件：
   `sudo setcap cap_net_admin,cap_net_raw+ep /volume*/@appdata/easytier-pro/runtime/easytier-core`
   （每次重新下载运行时后需要再执行一次；概览页的「复制命令」按钮直接给出当前路径的完整命令）。

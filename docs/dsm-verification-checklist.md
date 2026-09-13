@@ -123,14 +123,20 @@ curl 登录得到的会话可以正常返回用户名）。真实会话只能在
 DSM 不允许第三方套件以 root 运行，也无从获得 capability，因此守护进程在每次启动时检查运行时
 二进制的文件能力（`security.capability` 中的 `CAP_NET_ADMIN`），并把结果同步到 Console：
 
-0. **前提：节点要连得上 peer，必须有 `CAP_NET_RAW`**。core 的 `flags.bind_device` 默认为
-   `true`，因此它会把每个出站 socket **同时绑定到本地地址和承载该地址的网卡**
-   （`SO_BINDTODEVICE`，见 `easytier-core/src/connectivity/{manual,direct}/mod.rs` 的
-   `collect_bind_addrs`）；Linux 只允许带 `CAP_NET_RAW` 的进程这么做。缺这个能力时每次连接都报
-   `bind addr fail ... Operation not permitted`，节点**能注册、显示在线，但 peer 列表始终为空**。
-   Console 目前不暴露 `bind_device`，所以要么由管理员授予 `CAP_NET_RAW`，要么在 Console/核心里
-   增加把 `bind_device` 置为 `false` 的途径（后者才能做到真正零 capability）。
-   实测：授予 `cap_net_raw+ep` 后同一节点立即连上 5 个 peer。
+0. **两个能力对应两个 Console 设置，都可以不要**。core 的两个默认值与能力需求的对应关系：
+
+   | 缺少的能力 | core 行为 | 下发到 Console 的设置 |
+   | --- | --- | --- |
+   | `CAP_NET_ADMIN` | 无法创建虚拟网卡 | `no_tun = true` |
+   | `CAP_NET_RAW` | 无法把出站 socket 绑定到网卡（`SO_BINDTODEVICE`） | `bind_device = false` |
+
+   第二条尤其重要：`flags.bind_device` 默认为 `true`，core 会把每个出站 socket 同时绑定到本地
+   地址与承载它的网卡（`collect_bind_addrs`，见 `easytier-core/src/connectivity/{manual,direct}/mod.rs`）。
+   缺 `CAP_NET_RAW` 时每次连接都报 `bind addr fail ... Operation not permitted`，节点**能注册、
+   显示在线，但 peer 列表始终为空**。实测：手工授予 `cap_net_raw+ep` 后同一节点立刻连上 5 个 peer。
+
+   两者都由守护进程自动写入 Console 的节点 override，**因此本套件可以做到零 capability、零 root
+   操作**。`bind_device = false` 需要 Console 侧支持（见下）。
 
 1. **默认（未授权）**：守护进程把本机在 Console 上的节点设为「无 TUN 模式」
    （`PUT /api/v1/tenants/{ws}/nodes/{id}/config`，在节点 override 中写入 `no_tun: true`），

@@ -445,28 +445,16 @@ function tunGrantCommand(status) {
 	return `sudo setcap cap_net_admin,cap_net_raw+ep ${runtimeDir(status)}/easytier-core`;
 }
 
-/* 缺少 CAP_NET_RAW 时节点能注册但连不上任何 peer：core 默认会把每个出站 socket 绑定到
-   承载本地地址的网卡（SO_BINDTODEVICE），Linux 只允许带 CAP_NET_RAW 的进程这么做。
-   这是比「没有虚拟网卡」更严重的问题，因此单独提示。 */
+/* 缺少 CAP_NET_RAW 时节点能注册但连不上任何 peer。这个设置由守护进程自动写到 Console
+   上（节点的 bind_device override），因此不需要管理员做任何事；这里只说明当前处于该模式。 */
 function bindNotice(status) {
 	if (!status.core_installed || status.bind_capable) {
 		return null;
 	}
-	const command = `sudo setcap cap_net_raw+ep ${runtimeDir(status)}/easytier-core`;
 	return banner(h('div', {}, [
-		h('p', { text: '本机缺少 CAP_NET_RAW，节点虽然能注册并显示在线，但无法连接任何 peer（节点列表为空）。' }),
-		h('p', { class: 'muted', text: '这是 EasyTier 默认把出站 socket 绑定到网卡所需的权限。请以管理员身份执行下面这条命令，然后重新启动套件：' }),
-		h('div', { class: 'row' }, [
-			h('code', { class: 'mono', text: command }),
-			button('复制命令', {
-				onclick: () => {
-					navigator.clipboard.writeText(command)
-						.then(() => notify('命令已复制。', 'success'))
-						.catch(() => notify('复制失败，请手动选择命令文本。', 'error'));
-				},
-			}),
-		]),
-	]), 'error');
+		h('p', { text: '本机以「不绑定网卡」方式连接：DSM 不允许套件持有 CAP_NET_RAW，而 EasyTier 默认会把出站连接绑定到网卡。' }),
+		h('p', { class: 'muted', text: '守护进程已自动在 EasyTier Console 上为本机节点关闭该绑定，无需任何手工操作，连接与节点访问都正常。' }),
+	]), 'info');
 }
 
 function runtimeDir(status) {
@@ -491,18 +479,21 @@ function tunNotice(status) {
 			h('br'),
 			'授予权限后本机会自动取消该设置，恢复完整模式。',
 		]),
-		h('p', { class: 'muted', text: '需要虚拟 IP 时，请以管理员身份执行下面这条命令（SSH，或用「控制面板 → 任务计划」新建一个以 root 运行的脚本任务），然后重新启动套件：' }),
-		h('div', { class: 'row' }, [
-			h('code', { class: 'mono', text: command }),
-			button('复制命令', {
-				onclick: () => {
-					navigator.clipboard.writeText(command)
-						.then(() => notify('命令已复制。', 'success'))
-						.catch(() => notify('复制失败，请手动选择命令文本。', 'error'));
-				},
-			}),
+		h('details', {}, [
+			h('summary', { text: '想让 NAS 本身拥有虚拟网卡（可选）' }),
+			h('p', { class: 'muted', text: '默认不需要这样做。只有当你希望 NAS 上的程序能主动访问其它节点时，才需要由管理员授权（SSH，或用「控制面板 → 任务计划」新建以 root 运行的脚本任务），然后重新启动套件：' }),
+			h('div', { class: 'row' }, [
+				h('code', { class: 'mono', text: command }),
+				button('复制命令', {
+					onclick: () => {
+						navigator.clipboard.writeText(command)
+							.then(() => notify('命令已复制。', 'success'))
+							.catch(() => notify('复制失败，请手动选择命令文本。', 'error'));
+					},
+				}),
+			]),
+			h('p', { class: 'muted', text: '每次重新下载运行时后，新文件都会丢失该权限，本页会再次显示这条提示。' }),
 		]),
-		h('p', { class: 'muted', text: '提示：每次重新下载运行时后，新文件都会丢失该权限，本页会再次显示这条提示。' }),
 	]), 'warning');
 }
 
