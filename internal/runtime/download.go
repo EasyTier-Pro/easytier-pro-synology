@@ -415,10 +415,7 @@ func (m *Manager) prepareCandidate(ctx context.Context, source downloadSource, s
 		m.log.Printf("Console 未提供 %s 的校验和，改用本地校验", version)
 	}
 	// The archive is authentic, so it is worth keeping for a retry. Only an
-	// archive whose checksum was published can be cached. The move is taken
-	// before the archive is read again so its contents are only ever stored
-	// once, and the returned path is the one the rest of the work reads.
-	archive = m.storeVerifiedArchive(archive, assetArch, version, checksum)
+	// archive whose checksum was published can be cached.
 	members, err := m.archiveMembers(archive)
 	if err != nil {
 		return candidate{}, err
@@ -451,6 +448,12 @@ func (m *Manager) prepareCandidate(ctx context.Context, source downloadSource, s
 	if !binaryMatchesVersion(ctx, cliPath, version) {
 		return candidate{}, errors.New("easytier-cli does not report the expected version")
 	}
+	// Kept only now that this host accepted the archive. Caching it earlier
+	// would store an archive this device rejects and, because the cache holds a
+	// single entry, evict the archive that does work: on armv7 the preferred
+	// armv7hf build cannot run on a soft-float host, so a retry would drop the
+	// usable armv7 archive and download both again.
+	m.storeVerifiedArchive(archive, assetArch, version, checksum)
 	return candidate{core: corePath, cli: cliPath}, nil
 }
 

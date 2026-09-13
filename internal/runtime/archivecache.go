@@ -40,7 +40,9 @@ func archiveCacheName(assetArch, version, checksum string) string {
 //
 // An entry that no longer matches the published checksum or its declared size is
 // discarded rather than reported, so a damaged or republished artifact costs a
-// download instead of failing the update.
+// download instead of failing the update. An entry that cannot even be measured
+// is left in place: it is never accepted, it occupies no space, and the next
+// download replaces it.
 //
 // The free-space download limit is deliberately not applied here: a cached
 // archive is not downloaded, so that limit says nothing about it, and rejecting

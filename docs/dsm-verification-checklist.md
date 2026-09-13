@@ -28,7 +28,7 @@
 | B8 | 套件中心启动套件 | 退出码 0，`easytier-core` 与 `easytier-cli` 位于 `$SYNOPKG_PKGVAR/runtime/` |
 | B9 | 重启 DSM 后等待 1 分钟 | 套件自动启动，`/api/status` 的 `running` 为 true（已连接过的设备） |
 | B10 | 升级套件（安装更高版本号的 `.spk`） | `$SYNOPKG_PKGVAR` 下 `state/`、`runtime/` 保留，无需重新登录 Console |
-| B11 | 卸载套件 | `$SYNOPKG_PKGVAR` 下 `state/`、`runtime/`、`logs/`、`run/` 全部删除（密钥与机器标识不残留） |
+| B11 | 卸载套件 | `$SYNOPKG_PKGVAR` 下 `state/`、`runtime/`、`logs/`、`run/`、`cache/` 全部删除（密钥、机器标识与缓存的运行时归档不残留） |
 | B12 | 概览页执行「加入网络」 | Console 中出现本机节点；DSM 上出现 `tun`/`easytier` 网卡，`local-summary` 的 `interfaces` 列出该网卡 |
 | B13 | `kill` 掉 `easytier-core` 进程 | 60 秒内自动重新拉起，日志页出现重启记录 |
 | B14 | 概览页「打开 Console」 | 新标签页打开 Console 网页，地址与 Console 地址推导规则一致 |
@@ -178,3 +178,14 @@ core 常驻、不创建 TUN、并成功入网。
 idempotency key 记录该节点的 reconfigure 操作，再次收到同一个 key 时直接返回已记录的操作、
 **不应用新配置**。实测：同一 key 先写 `{"no_tun":true}` 再写 `{}`，第二次返回 HTTP 200 但
 override 仍为 `{"no_tun":true}`；换一个新 key 才真正生效。
+
+## E. 已知问题（未随本次改动修复）
+
+### E1. 指定非稳定版本时无法通过校验
+
+`POST /api/runtime/download` 可以带一个版本号，但下载 URL 用的是该版本，而校验和与大小始终取自
+`release.Stable.Artifacts`（`internal/runtime/download.go` 中 `downloadRun` 与 `releaseArtifact`）。
+因此只要请求的版本不是稳定版，校验和就对不上，更新必然失败——除非两个版本的产物字节完全相同。
+
+仅通过直接调用本机 API 才会触发：界面上的更新按钮不传版本号（`ui/pages/overview.js`）。
+与运行时归档缓存无关（校验失败时不会写入缓存），是本次改动之前就存在的问题。

@@ -16,11 +16,18 @@ import (
 // expects, so the shell stub stands in for a real runtime binary.
 func runtimeArchive(t *testing.T, version string) string {
 	t.Helper()
+	return runtimeArchiveFor(t, "x86_64", version)
+}
+
+// runtimeArchiveFor builds the archive for one architecture, so a test can drive
+// the fallback between two architectures.
+func runtimeArchiveFor(t *testing.T, assetArch, version string) string {
+	t.Helper()
 	tag := strings.TrimPrefix(version, "v")
 	archive := filepath.Join(t.TempDir(), "asset.zip")
 	writeArchive(t, archive, map[string]string{
-		"easytier-linux-x86_64/easytier-core": "#!/bin/sh\necho \"easytier-core " + tag + "\"\n",
-		"easytier-linux-x86_64/easytier-cli":  "#!/bin/sh\necho \"easytier-cli " + tag + "\"\n",
+		"easytier-linux-" + assetArch + "/easytier-core": "#!/bin/sh\necho \"easytier-core " + tag + "\"\n",
+		"easytier-linux-" + assetArch + "/easytier-cli":  "#!/bin/sh\necho \"easytier-cli " + tag + "\"\n",
 	})
 	return archive
 }
@@ -404,5 +411,58 @@ func TestStoreVerifiedArchiveKeepsTheArchiveWhenItCannotCache(t *testing.T) {
 	}
 	if _, err := os.Stat(archive); err != nil {
 		t.Fatalf("the verified archive was lost: %v", err)
+	}
+}
+
+// A candidate this host turns out to reject must not reach the cache. The cache
+// holds one entry, so storing a rejected archive would evict the archive that
+// does work: armv7 devices prefer armv7hf, and that build cannot run on a
+// soft-float host, so this is the normal arm case rather than an edge case.
+func TestRejectedCandidateDoesNotEvictTheUsableCachedArchive(t *testing.T) {
+	// The usable archive is already cached from an earlier failed run.
+	usable := runtimeArchiveFor(t, "armv7", "v2.6.4")
+	usableSum, err := fileSHA256(usable)
+	if err != nil {
+		t.Fatalf("hash usable archive: %v", err)
+	}
+	manager := newTestManager(t)
+	cached := manager.storeVerifiedArchive(usable, "armv7", "v2.6.4", usableSum)
+
+	// The preferred archive downloads and verifies, but its binaries report a
+	// different version - how a build that cannot run on this host fails.
+	rejected := runtimeArchiveFor(t, "armv7hf", "v2.6.3")
+	rejectedBody, err := os.ReadFile(rejected)
+	if err != nil {
+		t.Fatalf("read rejected archive: %v", err)
+	}
+	rejectedSum, err := fileSHA256(rejected)
+	if err != nil {
+		t.Fatalf("hash rejected archive: %v", err)
+	}
+	rejectedSize, err := fileSize(rejected)
+	if err != nil {
+		t.Fatalf("size rejected archive: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(rejectedBody)
+	}))
+	t.Cleanup(server.Close)
+
+	if _, err := manager.prepareCandidate(context.Background(),
+		downloadSource{name: "Gitee", url: server.URL + "/asset.zip"},
+		t.TempDir(), "armv7hf", "v2.6.4", rejectedSum, rejectedSize); err == nil {
+		t.Fatal("an archive whose binaries report the wrong version was accepted")
+	}
+
+	if _, err := os.Stat(cached); err != nil {
+		t.Fatalf("the usable cached archive was evicted by a rejected candidate: %v", err)
+	}
+	entries, err := os.ReadDir(manager.paths.ArchiveCacheDir())
+	if err != nil {
+		t.Fatalf("read cache dir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(cached) {
+		t.Fatalf("cache holds %d entries after a rejected candidate, want only %q", len(entries), filepath.Base(cached))
 	}
 }
