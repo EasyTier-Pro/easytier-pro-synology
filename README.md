@@ -54,8 +54,9 @@
   「控制面板 → 安全性 → 防火墙」中自行放行（OpenWrt 版插件的 zone 逻辑没有移植）。
 - DSM 7 强制第三方套件降权运行：`conf/privilege` 只允许 `defaults.run-as = "package"`，
   且不接受 `ctrl-script`、`executable` 与 `tool.capabilities`，因此守护进程以套件专用用户
-  `easytier-pro` 运行、不带任何 capability；本机 API 只监听回环，由 nginx 转发前完成
-  DSM 会话校验。
+  `easytier-pro` 运行、不带任何 capability；本机 API 只监听回环，并且每个请求都要先通过
+  DSM 会话校验——守护进程携带调用方 Cookie 通过回环询问 DSM 自身的 Web API，由 DSM 判定
+  该会话是否为管理员（详见 `docs/dsm-verification-checklist.md`）。
 - TUN 设备需要 `CAP_NET_ADMIN`，而运行时二进制是首次连接时下载到套件数据目录的，无法由 DSM
   提前授予。没有该能力时守护进程会自动启用**中继模式**：在 EasyTier Console 上把本机节点设为
   「无 TUN 模式」（下发的实例配置因此与本机权限一致），节点仍会加入网络并中继流量，但本机没有

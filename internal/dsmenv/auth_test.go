@@ -3,85 +3,125 @@ package dsmenv
 import (
 	"net/http"
 	"net/http/httptest"
-	"reflect"
+	"net/url"
+	"sync/atomic"
 	"testing"
 )
 
-// TestCookieCandidatesTriesEveryIdentifier covers the failure this
-// normalization exists for: a browser holds a stale "id" beside the current
-// one, and the order it sends them decides whether authenticate.cgi accepts the
-// request.
-func TestCookieCandidatesTriesEveryIdentifier(t *testing.T) {
-	got := cookieCandidates("did=abc; id=stale; id=fresh")
-	want := []string{"id=fresh; did=abc", "id=stale; did=abc"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("cookieCandidates() = %q, want %q", got, want)
+// newTestAuthenticator points an authenticator at a fake DSM listener and
+// reports how many times that listener was called.
+func newTestAuthenticator(t *testing.T, body string, status int) (*Authenticator, *http.Request, *int32) {
+	t.Helper()
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("cannot parse the test server address: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	request.Header.Set("X-DSM-Scheme", parsed.Scheme)
+	request.Header.Set("X-DSM-Port", parsed.Port())
+	request.Header.Set("Cookie", "id=session")
+	return New(nil), request, &calls
+}
+
+func TestAuthenticateAcceptsAdministratorSession(t *testing.T) {
+	auth, request, _ := newTestAuthenticator(t, `{"data":{"users":[]},"success":true}`, http.StatusOK)
+	user, aerr := auth.Authenticate(request.Context(), request)
+	if aerr != nil {
+		t.Fatalf("Authenticate() rejected an administrator session: %v", aerr)
+	}
+	if user == "" {
+		t.Fatal("Authenticate() returned an empty identity")
 	}
 }
 
-func TestCookieCandidatesCollapsesToASingleIdentifier(t *testing.T) {
-	for _, candidate := range cookieCandidates("id=stale; id=fresh") {
-		if got := parseCookie(candidate); len(got) != 1 || got[0].name != sessionCookie {
-			t.Fatalf("candidate %q does not carry exactly one id cookie", candidate)
+// A valid session whose account may not call an administrative API must be
+// reported as forbidden, not as unauthenticated.
+func TestAuthenticateRejectsNonAdministrator(t *testing.T) {
+	auth, request, _ := newTestAuthenticator(t, `{"error":{"code":105},"success":false}`, http.StatusOK)
+	if _, aerr := auth.Authenticate(request.Context(), request); aerr == nil || aerr.Code != "dsm_auth_forbidden" {
+		t.Fatalf("Authenticate() = %v, want dsm_auth_forbidden", aerr)
+	}
+}
+
+func TestAuthenticateRejectsUnknownSession(t *testing.T) {
+	auth, request, _ := newTestAuthenticator(t, `{"error":{"code":119},"success":false}`, http.StatusOK)
+	if _, aerr := auth.Authenticate(request.Context(), request); aerr == nil || aerr.Code != "dsm_auth_required" {
+		t.Fatalf("Authenticate() = %v, want dsm_auth_required", aerr)
+	}
+}
+
+// A listener that is not the DSM Web API must not be treated as an authority.
+func TestAuthenticateRejectsNonDSMAnswer(t *testing.T) {
+	auth, request, _ := newTestAuthenticator(t, "<html>not dsm</html>", http.StatusOK)
+	if _, aerr := auth.Authenticate(request.Context(), request); aerr == nil || aerr.Code != "dsm_auth_required" {
+		t.Fatalf("Authenticate() = %v, want dsm_auth_required", aerr)
+	}
+}
+
+func TestAuthenticateRequiresACookie(t *testing.T) {
+	auth, request, calls := newTestAuthenticator(t, `{"success":true}`, http.StatusOK)
+	request.Header.Del("Cookie")
+	if _, aerr := auth.Authenticate(request.Context(), request); aerr == nil || aerr.Code != "dsm_auth_required" {
+		t.Fatalf("Authenticate() = %v, want dsm_auth_required", aerr)
+	}
+	if got := atomic.LoadInt32(calls); got != 0 {
+		t.Fatalf("a request without a cookie reached DSM %d times", got)
+	}
+}
+
+// The answer is cached per session cookie, so a burst of requests does not
+// cause one DSM call each.
+func TestAuthenticateCachesPerCookie(t *testing.T) {
+	auth, request, calls := newTestAuthenticator(t, `{"success":true}`, http.StatusOK)
+	for range 3 {
+		if _, aerr := auth.Authenticate(request.Context(), request); aerr != nil {
+			t.Fatalf("Authenticate() = %v, want success", aerr)
+		}
+	}
+	if got := atomic.LoadInt32(calls); got != 1 {
+		t.Fatalf("DSM was asked %d times, want 1", got)
+	}
+}
+
+func TestEndpointsPrefersTheProxiedAddress(t *testing.T) {
+	auth := New(nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	request.Header.Set("X-DSM-Scheme", "https")
+	request.Header.Set("X-DSM-Port", "5001")
+	got := auth.endpoints(request)
+	if len(got) == 0 || got[0] != "https://127.0.0.1:5001" {
+		t.Fatalf("endpoints() = %q, want the reported address first", got)
+	}
+}
+
+func TestEndpointsIgnoresAMalformedPort(t *testing.T) {
+	auth := New(nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	request.Header.Set("X-DSM-Scheme", "https")
+	request.Header.Set("X-DSM-Port", "not-a-port")
+	for _, endpoint := range auth.endpoints(request) {
+		if endpoint == "https://127.0.0.1:not-a-port" {
+			t.Fatalf("endpoints() used a malformed port: %q", endpoint)
 		}
 	}
 }
 
-func TestCookieCandidatesDropsRepeatedValues(t *testing.T) {
-	got := cookieCandidates("id=same; id=same")
-	if len(got) != 1 {
-		t.Fatalf("cookieCandidates() = %q, want a single candidate", got)
-	}
-}
-
-func TestCookieCandidatesKeepsHeaderWithoutIdentifier(t *testing.T) {
-	got := cookieCandidates("did=abc")
-	if len(got) != 1 || got[0] != "did=abc" {
-		t.Fatalf("cookieCandidates() = %q, want [did=abc]", got)
-	}
-}
-
-func TestCookieCandidatesPreservesIdentifierlessCookies(t *testing.T) {
-	got := cookieCandidates("did=abc; id=fresh; _SSID=xyz")
-	want := []string{"id=fresh; did=abc; _SSID=xyz"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("cookieCandidates() = %q, want %q", got, want)
-	}
-}
-
-func TestParseCookieSkipsMalformedPairs(t *testing.T) {
-	got := parseCookie(" ; =empty; did=abc ; flag")
-	want := []cookie{{name: "did", value: "abc"}, {name: "flag", value: ""}}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("parseCookie() = %v, want %v", got, want)
-	}
-}
-
-// SynoCgiIsAuthorized only accepts a session whose recorded login address
-// matches REMOTE_ADDR, so the address nginx reports must not be the only one
-// tried: the forwarded client address is preferred, then the direct peer.
-func TestRemoteAddrCandidatesOrder(t *testing.T) {
+func TestDevelopmentBypassSkipsDSM(t *testing.T) {
+	auth := &Authenticator{bypass: true, cache: map[string]entry{}}
 	request := httptest.NewRequest(http.MethodGet, "/api/status", nil)
-	request.RemoteAddr = "127.0.0.1:41234"
-	request.Header.Set("X-Real-IP", "10.0.0.5")
-	got := remoteAddrCandidates(request)
-	if len(got) < 2 || got[0] != "10.0.0.5" || got[1] != "127.0.0.1" {
-		t.Fatalf("remoteAddrCandidates() = %q, want the forwarded address first", got)
+	user, aerr := auth.Authenticate(request.Context(), request)
+	if aerr != nil {
+		t.Fatalf("Authenticate() = %v, want success", aerr)
 	}
-}
-
-func TestRemoteAddrCandidatesSkipsDuplicates(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/api/status", nil)
-	request.RemoteAddr = "10.0.0.5:41234"
-	request.Header.Set("X-Real-IP", "10.0.0.5")
-	got := remoteAddrCandidates(request)
-	seen := map[string]int{}
-	for _, address := range got {
-		seen[address]++
-	}
-	for address, count := range seen {
-		if count > 1 {
-			t.Fatalf("address %q appears %d times in %q", address, count, got)
-		}
+	if user != devUser {
+		t.Fatalf("Authenticate() = %q, want %q", user, devUser)
 	}
 }

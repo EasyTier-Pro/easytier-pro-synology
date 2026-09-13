@@ -36,11 +36,33 @@
 
 ## C. 只能在 DSM 上验证的点（实测结果见 D 节）
 
-- B4/B5：`authenticate.cgi` 会话校验与 `administrators` 组成员判断只能在 DSM 上验证。
-  若实测该 CGI 在非 CGI 进程中不回显用户名，按设计预案改为随包安装的小型 CGI 反代
-  （见仓库计划文档），**不得**降级为无鉴权的 API。
+- B4/B5：会话校验只能通过 DSM 自己的接口完成（见下节「本机 API 鉴权」的实测结论）。
 - B9：DSM 开机自启依赖 `INFO` 的 `startstop_restart_services` 与 `precheckstartstop`。
 - B10/B11：套件升级与卸载行为由 DSM 保证，`postuninst` 只负责清理数据目录。
+
+### 本机 API 鉴权：实测结论与实现
+
+守护进程把「这个会话是否是管理员」这个问题**交给 DSM 自己回答**：携带调用方的 Cookie，
+通过回环访问 DSM 自身的 Web API，调用一个只有管理员能调用的接口
+（`SYNO.Core.User&method=list`，`version=1`）：
+
+| DSM 应答 | 判定 | 返回给界面 |
+| --- | --- | --- |
+| `success: true` | 有效会话且为管理员 | 放行 |
+| `error.code = 105` | 会话有效但不是管理员 | 403 `dsm_auth_forbidden` |
+| 其它错误（如 119 会话失效） | 没有有效会话 | 401 `dsm_auth_required` |
+| 无法连接 / 非 DSM 应答 | 校验不通过 | 401 `dsm_auth_required` |
+
+DSM 监听地址由 nginx 通过 `X-DSM-Scheme` / `X-DSM-Port` 告知，回退顺序为
+`https://127.0.0.1:5001`、`https://127.0.0.1:443`。
+
+**为什么不用 `authenticate.cgi`**：早期实现用请求的 Cookie 合成 CGI 环境后直接执行
+`authenticate.cgi`。在 DSM 7.2 实测，该方式对**真实浏览器会话**始终返回空——即使把
+`REMOTE_ADDR`/`SERVER_ADDR`/`SERVER_NAME`/端口等所有组合逐一代入（对照：同一 CGI 对
+curl 登录得到的会话可以正常返回用户名）。真实会话只能在 DSM 自己的请求管线内解析，
+因此改为上表的做法，且不引入随包 CGI。
+
+**必须遵守**：不得因为校验困难而降级为无鉴权的 API；DSM 不可达时一律按未登录处理。
 
 ## D. 实机执行结果（DSM 7.2.2-72806，DS3622xs+，PVE 虚拟机）
 
@@ -79,8 +101,7 @@
 4. **应用页面路径**：DSM 把第三方应用窗口开到 `/3rdparty/<package>/index.html`，该路径默认没有
    nginx 路由，需要套件通过 `web-config` worker 提供（本仓库的 `spk/nginx/easytier-pro.conf`）。
 5. **DSM 不对包内 CGI/静态文件做登录门禁**（无 Cookie 访问返回 200），鉴权必须由套件自己完成。
-   `authenticate.cgi` 只认标准登录会话携带的 `id` Cookie；由安装向导自动登录创建的
-   `_SSID`-only 会话会被判为未登录（重新登录即可恢复）。
+   会话本身由 DSM 判定，见上文「本机 API 鉴权：实测结论与实现」。
 6. **nginx 注入的 `ports` 声明**：`web-config` worker 的 `ports` 是给 nginx 预留端口用的，
    `enable`/`disable` 同时声明同一端口会导致 `Runtime port ... conflict for nginx` 并使套件启动失败
    （272）。本项目只注入 location，不声明端口。
