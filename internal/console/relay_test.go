@@ -1,6 +1,13 @@
 package console
 
-import "testing"
+import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+)
 
 // The Console replays a write when it sees an idempotency key it already
 // recorded, so two logical writes must never share one.
@@ -87,5 +94,147 @@ func TestSetOverrideBoolRevertsAndIsIdempotent(t *testing.T) {
 	}
 	if len(empty) != 0 {
 		t.Fatalf("no keys should have been written: %#v", empty)
+	}
+}
+
+// deviceDefaultHandler serves the endpoints the device-declaration flow uses,
+// and records what was written.
+type deviceDefaultHandler struct {
+	// supportsDeclaration=false stands in for a Console that predates the
+	// endpoint.
+	supportsDeclaration bool
+	stored              map[string]any
+	puts                int
+}
+
+func (h *deviceDefaultHandler) serve(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	switch {
+	case r.URL.Path == "/api/v1/auth/me":
+		_, _ = w.Write([]byte(`{"tenants":[{"id":"` + relayTenantID + `"}]}`))
+	case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/machines/"):
+		_, _ = w.Write([]byte(`{"device":{"id":"` + relayDeviceID + `"},"networks":[{"id":"` + relayNetworkID + `"}]}`))
+	case strings.HasSuffix(r.URL.Path, "/devices/"+relayDeviceID+"/default-config"):
+		if !h.supportsDeclaration {
+			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+			return
+		}
+		if r.Method == http.MethodGet {
+			body, _ := json.Marshal(h.stored)
+			_, _ = w.Write(body)
+			return
+		}
+		h.puts++
+		body, _ := io.ReadAll(r.Body)
+		h.stored = map[string]any{}
+		_ = json.Unmarshal(body, &h.stored)
+		_, _ = w.Write(body)
+	default:
+		http.Error(w, "unexpected path "+r.URL.Path, http.StatusNotFound)
+	}
+}
+
+const (
+	relayTenantID  = "b1f0a1c2-0000-4000-8000-000000000001"
+	relayDeviceID  = "b1f0a1c2-0000-4000-8000-000000000002"
+	relayNetworkID = "b1f0a1c2-0000-4000-8000-000000000003"
+)
+
+func newRelayClient(t *testing.T, handler *deviceDefaultHandler) *Client {
+	t.Helper()
+	client, store := newTestClient(t, http.HandlerFunc(handler.serve))
+	writeSession(t, store, Session{AccessToken: "access", ExpiresAt: time.Now().Unix() + 3600})
+	selectWorkspace(t, client, relayTenantID)
+	return client
+}
+
+// A node cannot be corrected before it exists, so the declaration that keeps a
+// new node correct has to be written against the device.
+func TestDeclareDeviceDefaultsWritesWhatTheDeviceNeeds(t *testing.T) {
+	handler := &deviceDefaultHandler{supportsDeclaration: true}
+	client := newRelayClient(t, handler)
+
+	supported, aerr := client.DeclareDeviceDefaults(t.Context(), relayDeviceID,
+		NodeMode{NoTun: true, DisableBindDevice: true})
+	if aerr != nil {
+		t.Fatalf("declare: %v", aerr)
+	}
+	if !supported {
+		t.Fatal("a Console with the endpoint was reported as unsupported")
+	}
+	if handler.stored["no_tun"] != true {
+		t.Fatalf("no_tun = %#v, want true", handler.stored["no_tun"])
+	}
+	if handler.stored["bind_device"] != false {
+		t.Fatalf("bind_device = %#v, want false", handler.stored["bind_device"])
+	}
+	if len(handler.stored) != 2 {
+		t.Fatalf("declaration carried unexpected keys: %#v", handler.stored)
+	}
+}
+
+// The declaration is written only when it would change, so a device that is
+// already configured does not rewrite the Console on every watch.
+func TestDeclareDeviceDefaultsIsIdempotent(t *testing.T) {
+	handler := &deviceDefaultHandler{supportsDeclaration: true}
+	client := newRelayClient(t, handler)
+	mode := NodeMode{NoTun: true, DisableBindDevice: false}
+
+	for range 3 {
+		if _, aerr := client.DeclareDeviceDefaults(t.Context(), relayDeviceID, mode); aerr != nil {
+			t.Fatalf("declare: %v", aerr)
+		}
+	}
+	if handler.puts != 1 {
+		t.Fatalf("declaration written %d times, want 1", handler.puts)
+	}
+}
+
+// A device that can do everything again has to clear its declaration, or it
+// would stay on a restricted mode it no longer needs.
+func TestDeclareDeviceDefaultsClearsWhenNothingIsNeeded(t *testing.T) {
+	handler := &deviceDefaultHandler{supportsDeclaration: true, stored: map[string]any{"no_tun": true}}
+	client := newRelayClient(t, handler)
+
+	if _, aerr := client.DeclareDeviceDefaults(t.Context(), relayDeviceID, NodeMode{}); aerr != nil {
+		t.Fatalf("declare: %v", aerr)
+	}
+	if len(handler.stored) != 0 {
+		t.Fatalf("declaration was not cleared: %#v", handler.stored)
+	}
+}
+
+// A Console that predates the endpoint must be reported, not failed: the node
+// overrides still cover it, and a device must not refuse to work over a missing
+// improvement.
+func TestDeclareDeviceDefaultsReportsAnOlderConsole(t *testing.T) {
+	handler := &deviceDefaultHandler{supportsDeclaration: false}
+	client := newRelayClient(t, handler)
+
+	supported, aerr := client.DeclareDeviceDefaults(t.Context(), relayDeviceID,
+		NodeMode{NoTun: true, DisableBindDevice: true})
+	if aerr != nil {
+		t.Fatalf("an older Console was reported as an error: %v", aerr)
+	}
+	if supported {
+		t.Fatal("an older Console was reported as supporting the declaration")
+	}
+}
+
+// The device id and the memberships come from the machine payload, which is
+// what the declaration is written against.
+func TestMachineStateReadsTheDeviceAndItsNetworks(t *testing.T) {
+	handler := &deviceDefaultHandler{supportsDeclaration: true}
+	client := newRelayClient(t, handler)
+
+	state, aerr := client.MachineState(t.Context())
+	if aerr != nil {
+		t.Fatalf("machine state: %v", aerr)
+	}
+	if state.DeviceID != relayDeviceID {
+		t.Fatalf("device id = %q, want %q", state.DeviceID, relayDeviceID)
+	}
+	if len(state.NetworkIDs) != 1 || state.NetworkIDs[0] != relayNetworkID {
+		t.Fatalf("networks = %v, want [%s]", state.NetworkIDs, relayNetworkID)
 	}
 }

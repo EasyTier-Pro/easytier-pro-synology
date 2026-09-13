@@ -64,28 +64,46 @@ func (m *Manager) SyncRelayMode(ctx context.Context) *apperr.Error {
 		return nil
 	}
 	mode := m.NodeMode()
-	if !mode.NoTun && !mode.DisableBindDevice {
-		// This device can do everything the core asks of it, so there is
-		// nothing to negotiate.
-		m.recordModeSync(mode, true)
-		return nil
-	}
 	if !m.cli.LoggedIn() {
+		if !mode.NoTun && !mode.DisableBindDevice {
+			// This host can do everything the core asks of it and there is
+			// nothing inherited to correct, so there is nothing to say - and a
+			// device token alone could not say it anyway.
+			m.recordModeSync(mode, true)
+			return nil
+		}
 		// The settings still have to be written, but a device token alone
 		// cannot reach the Console API. Say so rather than skipping silently:
 		// the node will not start until the Console is told, and the operator
 		// needs to know why.
 		return apperr.New(apperr.CodeNotAuthenticated)
 	}
-	networks, aerr := m.cli.EnrolledNetworkIDs(ctx)
+	state, aerr := m.cli.MachineState(ctx)
 	if aerr != nil {
 		return aerr
 	}
+
+	// The device-level declaration is what makes a node correct from its first
+	// push, so it is written before anything is said about individual nodes.
+	// A Console that does not know the endpoint reports that, and the node
+	// overrides below remain the whole mechanism there.
+	declared, aerr := m.cli.DeclareDeviceDefaults(ctx, state.DeviceID, mode)
+	if aerr != nil {
+		m.log.Errorf("向 Console 声明本机所需配置失败: %s", aerr.Message)
+	} else if !declared {
+		// Said once: an older Console keeps working through the node overrides
+		// below, and repeating this on every watch would only add noise.
+		m.reportDeclarationUnsupported()
+	}
+
 	// Every network is attempted even after a failure: stopping at the first
 	// error would leave the rest on a stale mode and, since the networks are
 	// visited in the same order every time, could keep them there forever.
 	var firstError *apperr.Error
-	for _, networkID := range networks {
+	if aerr != nil {
+		firstError = aerr
+	}
+	for _, networkID := range state.NetworkIDs {
 		changed, aerr := m.cli.SetNodeMode(ctx, networkID, mode)
 		if aerr != nil {
 			m.log.Errorf("同步网络 %s 的运行模式失败: %s", networkID, aerr.Message)
@@ -98,8 +116,23 @@ func (m *Manager) SyncRelayMode(ctx context.Context) *apperr.Error {
 			m.log.Printf("已按本机能力更新网络 %s 上的节点配置：%s", networkID, describeNodeMode(mode))
 		}
 	}
+	if declared {
+		m.log.Printf("已在 Console 上为本机声明默认配置：%s", describeNodeMode(mode))
+	}
 	m.recordModeSync(mode, firstError == nil)
 	return firstError
+}
+
+// reportDeclarationUnsupported says once that this Console has no device-level
+// declaration, so the mode is still being expressed per node.
+func (m *Manager) reportDeclarationUnsupported() {
+	m.syncState.mu.Lock()
+	reported := m.syncState.declarationReported
+	m.syncState.declarationReported = true
+	m.syncState.mu.Unlock()
+	if !reported {
+		m.log.Printf("当前 Console 不支持设备级默认配置，仍按网络逐个下发本机所需配置")
+	}
 }
 
 // recordModeSync remembers what the Console was told, so the interface can tell

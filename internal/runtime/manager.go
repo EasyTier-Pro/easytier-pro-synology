@@ -48,6 +48,9 @@ type Manager struct {
 		// whether that write succeeded.
 		applied console.NodeMode
 		synced  bool
+		// declarationReported records that this Console was found to have no
+		// device-level declaration, so that is said once and not every watch.
+		declarationReported bool
 	}
 }
 

@@ -29,9 +29,12 @@ func newIdempotencyKey(prefix, machineID, networkID string) string {
 	return prefix + "-" + machineID + "-" + networkID + "-" + hex.EncodeToString(suffix)
 }
 
-// machineNetworks is the part of the machine payload that lists the networks
-// this device already has a node in.
+// machineNetworks is the part of the machine payload this daemon needs: the
+// device it belongs to, and the networks that device already has a node in.
 type machineNetworks struct {
+	Device struct {
+		ID string `json:"id"`
+	} `json:"device"`
 	Networks []struct {
 		ID string `json:"id"`
 	} `json:"networks"`
@@ -42,39 +45,54 @@ type nodeConfigView struct {
 	Override map[string]any `json:"override"`
 }
 
-// EnrolledNetworkIDs lists the networks this machine has a node in.
-func (c *Client) EnrolledNetworkIDs(ctx context.Context) ([]string, *apperr.Error) {
+// deviceDefaultConfigView is the device-declared settings the Console holds.
+type deviceDefaultConfigView struct {
+	NoTun      *bool `json:"no_tun"`
+	BindDevice *bool `json:"bind_device"`
+}
+
+// MachineState is what this device is, as the Console sees it.
+type MachineState struct {
+	// DeviceID is the Console's device record for this machine, and is what the
+	// device-level declaration is written against.
+	DeviceID string
+	// NetworkIDs are the networks that device already has a node in.
+	NetworkIDs []string
+}
+
+// MachineState reads this machine's device record and its network memberships.
+func (c *Client) MachineState(ctx context.Context) (MachineState, *apperr.Error) {
 	workspaceID, aerr := c.workspaceID(ctx)
 	if aerr != nil {
-		return nil, aerr
+		return MachineState{}, aerr
 	}
 	machineID, err := c.store.MachineID()
 	if err != nil {
-		return nil, apperr.New(apperr.CodeStateUnavailable)
+		return MachineState{}, apperr.New(apperr.CodeStateUnavailable)
 	}
 	status, payload, aerr := c.request(ctx, http.MethodGet,
 		tenantPath(workspaceID, "/machines/"+machineID), nil, "application/json", "")
 	if aerr != nil {
-		return nil, aerr
+		return MachineState{}, aerr
 	}
 	if status == http.StatusNotFound {
-		// The device is not enrolled yet: there is no node to configure.
-		return nil, nil
+		// The device is not enrolled yet: there is nothing to configure.
+		return MachineState{}, nil
 	}
 	if status != http.StatusOK {
-		return nil, apperr.New(apperr.CodeRouterNotEnrolled)
+		return MachineState{}, apperr.New(apperr.CodeRouterNotEnrolled)
 	}
 	var machine machineNetworks
 	if aerr := decodeJSON(payload, &machine); aerr != nil {
-		return nil, apperr.New(apperr.CodeInvalidConsoleResponse)
+		return MachineState{}, apperr.New(apperr.CodeInvalidConsoleResponse)
 	}
-	ids := make([]string, 0, len(machine.Networks))
+	state := MachineState{DeviceID: machine.Device.ID}
 	for _, network := range machine.Networks {
 		if config.ValidUUID(network.ID) {
-			ids = append(ids, network.ID)
+			state.NetworkIDs = append(state.NetworkIDs, network.ID)
 		}
 	}
-	return ids, nil
+	return state, nil
 }
 
 // nodeIDForMachine returns this machine's node in one network, or an empty
@@ -98,6 +116,83 @@ func (c *Client) nodeIDForMachine(ctx context.Context, workspaceID, networkID, m
 		}
 	}
 	return "", nil
+}
+
+// DeclareDeviceDefaults tells the Console which settings every node of this
+// device must start from. It reports whether the Console supports the
+// declaration at all.
+//
+// A node-level override can only be written once the node exists, which is
+// after the Console has already pushed that node a configuration this device
+// cannot honour. The declaration is held on the device instead, so a node is
+// built correctly the first time it is pushed and never has to be repaired:
+// this is the difference between a node that fails for a minute and one that
+// simply works.
+//
+// An older Console does not know the endpoint. That is reported rather than
+// treated as a failure, because the node-level override still covers such a
+// Console and a device must not refuse to connect over a missing improvement.
+func (c *Client) DeclareDeviceDefaults(ctx context.Context, deviceID string, mode NodeMode) (bool, *apperr.Error) {
+	if !config.ValidUUID(deviceID) {
+		return false, apperr.New(apperr.CodeRouterNotEnrolled)
+	}
+	workspaceID, aerr := c.workspaceID(ctx)
+	if aerr != nil {
+		return false, aerr
+	}
+	path := tenantPath(workspaceID, "/devices/"+deviceID+"/default-config")
+	status, payload, aerr := c.request(ctx, http.MethodGet, path, nil, "application/json", "")
+	if aerr != nil {
+		return false, aerr
+	}
+	switch status {
+	case http.StatusOK:
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusForbidden:
+		// This Console has no device-level declaration, so the node override
+		// remains the only place the mode can be expressed.
+		return false, nil
+	default:
+		return false, apperr.New(apperr.CodeRelayModeFailed)
+	}
+	var view deviceDefaultConfigView
+	if aerr := decodeJSON(payload, &view); aerr != nil {
+		return false, apperr.New(apperr.CodeInvalidConsoleResponse)
+	}
+	// The endpoint replaces the whole declaration, so it is written only when
+	// it would differ. The settings have opposite core defaults, so each is
+	// declared only when it has to be: no_tun is off unless asked for, and
+	// bind_device is on unless turned off.
+	declaration := map[string]any{}
+	if mode.NoTun {
+		declaration["no_tun"] = true
+	}
+	if mode.DisableBindDevice {
+		declaration["bind_device"] = false
+	}
+	if declarationEquals(view, mode) {
+		return true, nil
+	}
+	body, err := json.Marshal(declaration)
+	if err != nil {
+		return true, apperr.New(apperr.CodeStateUnavailable)
+	}
+	status, _, aerr = c.request(ctx, http.MethodPut, path, body, "application/json",
+		newIdempotencyKey("device-mode", deviceID, ""))
+	if aerr != nil {
+		return true, aerr
+	}
+	if !isSuccess(status) {
+		return true, apperr.New(apperr.CodeRelayModeFailed)
+	}
+	return true, nil
+}
+
+// declarationEquals reports whether the stored declaration already expresses
+// the requested mode.
+func declarationEquals(view deviceDefaultConfigView, mode NodeMode) bool {
+	noTun := view.NoTun != nil && *view.NoTun
+	bindDevice := view.BindDevice == nil || *view.BindDevice
+	return noTun == mode.NoTun && bindDevice == !mode.DisableBindDevice
 }
 
 // NodeMode is the configuration this device needs on the Console.
