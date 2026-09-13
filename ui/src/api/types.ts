@@ -22,6 +22,10 @@ export interface Status {
 	bind_capable?: boolean
 	/** Whether the Console already holds the mode this device needs. */
 	mode_synced?: boolean
+	/** The release the Console last offered; absent until it is known. */
+	latest_version?: string
+	/** Whether the installed core is older than that release. */
+	core_update_available?: boolean
 }
 
 export interface AuthStatus {

@@ -12,7 +12,7 @@ import type { Status } from '@/api/types'
 
 // vi.mock is hoisted above the module body, so the doubles it closes over have
 // to be created by vi.hoisted as well.
-const { apiMock, notifyMock } = vi.hoisted(() => ({
+const { apiMock, notifyMock, confirmMock } = vi.hoisted(() => ({
 	apiMock: {
 		status: vi.fn(),
 		authStatus: vi.fn(),
@@ -32,6 +32,7 @@ const { apiMock, notifyMock } = vi.hoisted(() => ({
 		operationStatus: vi.fn(),
 	},
 	notifyMock: vi.fn(),
+	confirmMock: vi.fn((_options?: unknown) => Promise.resolve(true)),
 }))
 
 vi.mock('@/api/client', () => ({
@@ -41,7 +42,7 @@ vi.mock('@/api/client', () => ({
 
 vi.mock('@/naive', () => ({
 	notify: (...args: unknown[]) => notifyMock(...args),
-	confirmDestructive: vi.fn(() => Promise.resolve(true)),
+	confirmDestructive: (options: unknown) => confirmMock(options),
 	message: { info: vi.fn(), success: vi.fn(), warning: vi.fn(), error: vi.fn() },
 	dialog: { info: vi.fn(() => ({ destroy: vi.fn() })), warning: vi.fn() },
 	notification: { info: vi.fn(), success: vi.fn(), warning: vi.fn(), error: vi.fn() },
@@ -152,6 +153,7 @@ describe('overview', () => {
 			fn.mockReset()
 		}
 		notifyMock.mockReset()
+		confirmMock.mockClear()
 	})
 
 	afterEach(() => {
@@ -244,6 +246,7 @@ describe('overview region updates', () => {
 			fn.mockReset()
 		}
 		notifyMock.mockReset()
+		confirmMock.mockClear()
 	})
 
 	// The defect this guards: an action used to re-render the whole page, which
@@ -444,6 +447,72 @@ describe('overview region updates', () => {
 		expect(wrapper.text()).toContain('10.9.9.0/24')
 		expect(wrapper.text()).toContain('退出 只有成员关系的网络')
 		expect(wrapper.text()).not.toContain('joined-only')
+	})
+
+	// The Console offering a newer release than the one installed is the only
+	// place an upgrade is offered: the install screen appears only when the core
+	// is missing, so an installed device would otherwise have no path to it.
+	it('offers an upgrade when the Console has a newer release', async () => {
+		const wrapper = await mountView({
+			status: { latest_version: 'v2.6.5', core_update_available: true },
+		})
+		expect(wrapper.text()).toContain('有新版本 v2.6.5 可用')
+		expect(wrapper.findAll('button').some((item) => item.text().includes('升级'))).toBe(true)
+	})
+
+	it('stays quiet when the installed release is the one offered', async () => {
+		const wrapper = await mountView({
+			status: { latest_version: 'v2.6.4', core_update_available: false },
+		})
+		expect(wrapper.text()).not.toContain('有新版本')
+		expect(wrapper.findAll('button').some((item) => item.text() === '升级')).toBe(false)
+	})
+
+	it('offers the upgrade while the service is stopped', async () => {
+		const wrapper = await mountView({
+			status: { running: false, latest_version: 'v2.6.5', core_update_available: true },
+		})
+		expect(wrapper.text()).toContain('启动连接')
+		expect(wrapper.text()).toContain('有新版本 v2.6.5 可用')
+	})
+
+	it('upgrades only after the operator confirms', async () => {
+		apiMock.downloadStart.mockResolvedValue({})
+		const wrapper = await mountView({
+			status: { latest_version: 'v2.6.5', core_update_available: true },
+		})
+
+		await wrapper.findAll('button').find((item) => item.text() === '升级')!.trigger('click')
+		await flushPromises()
+
+		expect(confirmMock).toHaveBeenCalled()
+		expect(apiMock.downloadStart).toHaveBeenCalled()
+	})
+
+	// A running upgrade replaces the binaries and restarts the core, so its
+	// progress has to be followed even though the device is not on the install
+	// screen. That screen is only shown while the core is missing.
+	it('follows an upgrade running on an installed core', async () => {
+		const wrapper = await mountView({
+			status: { latest_version: 'v2.6.5', core_update_available: true },
+			download: { state: 'running', phase: 'install', percent: 70 },
+		})
+		const afterMount = apiMock.downloadStatus.mock.calls.length
+
+		await new Promise((resolve) => setTimeout(resolve, 1700))
+		await flushPromises()
+
+		expect(apiMock.downloadStatus.mock.calls.length).toBeGreaterThan(afterMount)
+		expect(wrapper.text()).toContain('正在安装 EasyTier v2.6.5')
+	})
+
+	it('reports a failed upgrade with a way to retry', async () => {
+		const wrapper = await mountView({
+			status: { latest_version: 'v2.6.5', core_update_available: true },
+			download: { state: 'failed', phase: 'install', message: '新运行时未能启动。' },
+		})
+		expect(wrapper.text()).toContain('新运行时未能启动。')
+		expect(wrapper.findAll('button').some((item) => item.text().includes('重试升级'))).toBe(true)
 	})
 
 	// A component used in a template without being imported renders as an unknown

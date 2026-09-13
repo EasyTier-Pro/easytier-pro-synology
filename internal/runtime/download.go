@@ -826,12 +826,38 @@ func binaryMatchesVersion(ctx context.Context, binary, version string) bool {
 	if err != nil && output == "" {
 		return false
 	}
-	expected := strings.TrimPrefix(version, "v")
+	return versionReports(output, version)
+}
+
+// versionReports reports whether a runtime's version output is the release the
+// caller expected.
+//
+// A runtime reports more than the release tag - the real answer is
+// "easytier-core 2.6.4-8428a89d" for the release "v2.6.4", with the build's
+// commit appended - so the tag is matched as a whole rather than compared as a
+// string. What follows it has to be the end of the answer or a separator, which
+// is what keeps "2.6.40" from passing for "2.6.4": without that, a download of
+// the wrong release would be accepted, and an installed release would be called
+// up to date when the Console offers a different one.
+//
+// Every question of the form "is this runtime that release?" goes through here.
+// Two definitions of it would eventually disagree, and the disagreement would be
+// a device that refuses a good download or never offers an update it needs.
+func versionReports(output, version string) bool {
+	expected := strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if expected == "" {
+		return false
+	}
 	first := output
 	if index := strings.IndexByte(first, '\n'); index >= 0 {
 		first = first[:index]
 	}
-	return strings.Contains(first, " "+expected)
+	index := strings.Index(first, " "+expected)
+	if index < 0 {
+		return false
+	}
+	rest := first[index+1+len(expected):]
+	return rest == "" || rest[0] == '-' || rest[0] == '+' || rest[0] == ' '
 }
 
 // limitedBuffer caps how much command output is kept in memory.

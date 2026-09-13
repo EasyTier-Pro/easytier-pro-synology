@@ -17,6 +17,7 @@ import DetailList from '@/components/DetailList.vue'
 import AccountActions from '@/components/AccountActions.vue'
 import BindNotice from '@/components/BindNotice.vue'
 import TunNotice from '@/components/TunNotice.vue'
+import UpdateNotice from '@/components/UpdateNotice.vue'
 import DeviceLoginDialog from '@/components/DeviceLoginDialog.vue'
 import TokenDialog from '@/components/TokenDialog.vue'
 import WorkspaceDialog from '@/components/WorkspaceDialog.vue'
@@ -200,7 +201,7 @@ watch(screen, (value) => {
 // Polling has to follow both the screen and the download state: they arrive from
 // two requests, so a page opened while an install is already running would
 // otherwise never start following it.
-const followDownload = computed(() => screen.value === 'runtime' && downloadRunning.value)
+const followDownload = computed(() => downloadRunning.value)
 watch(followDownload, (active) => {
 	if (active) {
 		pollDownload()
@@ -261,6 +262,36 @@ function startDownload(): void {
 		// Reading the new state is enough: the watcher above starts polling.
 		void refresh('status', 'download')
 	}).catch((error) => {
+		if (error && (error as { code?: string }).code === 'download_busy') {
+			void refresh('status', 'download')
+			return
+		}
+		notify(messageOf(error), 'error')
+	})
+}
+
+// upgradeRuntime installs the release the Console offers, after confirming: it
+// replaces the binaries and restarts the core, so the tunnel drops for a moment.
+const upgradeInFlight = ref(false)
+
+async function upgradeRuntime(): Promise<void> {
+	const agreed = await confirmDestructive({
+		title: `升级到 EasyTier ${current.value?.latest_version || '新版本'}？`,
+		body: '升级会重启连接服务，网络会短暂中断；本机已加入的网络和设置都不会丢失。',
+		positiveText: '升级',
+	})
+	if (!agreed) {
+		return
+	}
+	upgradeInFlight.value = true
+	api.downloadStart().then(() => {
+		notify('已开始安装新版本。', 'success')
+		// Reading the state is enough: the watcher above starts following it.
+		void refresh('status', 'download').finally(() => {
+			upgradeInFlight.value = false
+		})
+	}).catch((error) => {
+		upgradeInFlight.value = false
 		if (error && (error as { code?: string }).code === 'download_busy') {
 			void refresh('status', 'download')
 			return
@@ -559,6 +590,12 @@ onUnmounted(() => {
 			<SectionCard title="启动连接" description="本机已准备就绪">
 				<BindNotice :status="current || {}" />
 				<TunNotice :status="current || {}" />
+				<UpdateNotice
+					:status="current || {}"
+					:download="download.data.value"
+					:busy="upgradeInFlight"
+					@upgrade="upgradeRuntime"
+				/>
 				<p class="etp-paragraph">
 					EasyTier 已安装，本机也已与账号关联。启动连接后，本机就会加入所选的私有网络。
 				</p>
@@ -574,6 +611,12 @@ onUnmounted(() => {
 			<SectionCard title="连接状态" :loading="summary.loading.value && summary.settled.value">
 				<BindNotice :status="current || {}" />
 				<TunNotice :status="current || {}" />
+				<UpdateNotice
+					:status="current || {}"
+					:download="download.data.value"
+					:busy="upgradeInFlight"
+					@upgrade="upgradeRuntime"
+				/>
 				<StatusBanner v-if="summaryState === 'unavailable'" type="warning">
 					无法读取本机连接详情，连接服务可能刚启动或已停止。可以稍后刷新，或先重启连接。
 				</StatusBanner>

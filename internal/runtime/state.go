@@ -42,6 +42,15 @@ type Status struct {
 	// able to tell the Console, which is what the interface must not claim
 	// otherwise.
 	ModeSynced bool `json:"mode_synced"`
+	// LatestVersion is the release the Console last offered. It is empty until
+	// the first lookup succeeds, and it keeps its value while the Console
+	// cannot be reached, so the interface is never told the release is unknown
+	// because of a passing failure.
+	LatestVersion string `json:"latest_version,omitempty"`
+	// CoreUpdateAvailable reports whether the installed core is older than the
+	// release the Console offers. Installing it is the operator's decision: it
+	// restarts the core and briefly interrupts the tunnel.
+	CoreUpdateAvailable bool `json:"core_update_available"`
 }
 
 // Status reports the current runtime state.
@@ -72,6 +81,8 @@ func (m *Manager) Status() (Status, *apperr.Error) {
 	if status.CoreInstalled {
 		status.CoreVersion = binaryVersion(ctx, m.paths.CoreBinary())
 	}
+	status.LatestVersion = m.latestRelease()
+	status.CoreUpdateAvailable = m.coreUpdateAvailable(status.CoreVersion)
 	if status.CLIInstalled {
 		status.CLIVersion = binaryVersion(ctx, m.paths.CLIbinary())
 	}

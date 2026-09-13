@@ -52,6 +52,18 @@ type Manager struct {
 		// device-level declaration, so that is said once and not every watch.
 		declarationReported bool
 	}
+
+	// releaseState remembers the release the Console last offered. It has its
+	// own lock because the watch runs outside the mutation lock.
+	releaseState struct {
+		mu sync.Mutex
+		// latest is the release tag from the last successful lookup, kept
+		// across a failed one so the interface's notice does not flicker.
+		latest string
+		// lastError is the most recent failure code, so a Console that cannot
+		// be reached is reported once rather than at every interval.
+		lastError string
+	}
 }
 
 // NewManager wires a manager to the package roots, state store and Console
@@ -92,6 +104,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.refreshDesired()
 	m.startRelayModeSync(ctx)
 	m.startInstanceWatch(ctx)
+	m.startReleaseWatch(ctx)
 	return nil
 }
 
