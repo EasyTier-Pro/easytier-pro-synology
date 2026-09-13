@@ -30,12 +30,26 @@ func tunCapable(corePath string) bool {
 	return parseFileCapability(buffer[:size], capNetAdmin)
 }
 
+// capFlagsEffective is VFS_CAP_FLAGS_EFFECTIVE in the magic_etc word of a
+// security.capability xattr. Without it the permitted set of the file does not
+// become effective when a non-root process executes it, so the capability
+// cannot actually be used.
+const capFlagsEffective = 0x000001
+
 // parseFileCapability reports whether one capability is part of the permitted
 // set of a security.capability xattr (struct vfs_cap_data: a u32 magic_etc
 // followed by up to two {permitted, inheritable} u32 pairs).
+//
+// The effective flag is required as well: `setcap cap_net_admin+p` (without
+// `e`) grants the capability only to the permitted set, which a non-root exec
+// cannot use, and reporting that as capable would leave the core failing to
+// create its TUN device.
 func parseFileCapability(data []byte, capability int) bool {
 	word := capability / 32
 	if word > 1 || len(data) < 12+word*8 {
+		return false
+	}
+	if binary.LittleEndian.Uint32(data[:4])&capFlagsEffective == 0 {
 		return false
 	}
 	permitted := binary.LittleEndian.Uint32(data[4+word*8:])

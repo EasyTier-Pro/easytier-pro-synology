@@ -35,6 +35,7 @@ const sessionCookie = "id"
 // Authenticator checks DSM sessions and caches the result per cookie.
 type Authenticator struct {
 	bypass bool
+	log    *config.Logger
 
 	mu    sync.Mutex
 	cache map[string]entry
@@ -57,9 +58,9 @@ type entry struct {
 
 // New builds an authenticator. The development bypass is only honoured when
 // the daemon runs outside DSM.
-func New() *Authenticator {
+func New(log *config.Logger) *Authenticator {
 	bypass := config.DevMode() && os.Getenv("ETP_DEV_NO_DSM_AUTH") == "1"
-	return &Authenticator{bypass: bypass, cache: map[string]entry{}}
+	return &Authenticator{bypass: bypass, log: log, cache: map[string]entry{}}
 }
 
 // Bypassed reports whether DSM session checks are disabled for development.
@@ -84,32 +85,105 @@ func (a *Authenticator) Authenticate(ctx context.Context, request *http.Request)
 			return "", apperr.New(apperr.CodeDSMAuthRequired)
 		}
 	}
-	user, ok := sessionUser(ctx, request)
-	if !ok {
-		a.store(cookie, "", outcomeUnauthenticated)
+	user, result := a.sessionUser(ctx, request)
+	a.store(cookie, user, result)
+	switch result {
+	case outcomeAuthenticated:
+		return user, nil
+	case outcomeForbidden:
+		return "", apperr.New(apperr.CodeDSMAuthForbidden)
+	default:
 		return "", apperr.New(apperr.CodeDSMAuthRequired)
 	}
-	if !isAdministrator(ctx, user) {
-		a.store(cookie, user, outcomeForbidden)
-		return "", apperr.New(apperr.CodeDSMAuthForbidden)
-	}
-	a.store(cookie, user, outcomeAuthenticated)
-	return user, nil
 }
 
-// sessionUser returns the authenticated DSM user of one request, or false when
-// no session cookie of the request resolves to a user.
-func sessionUser(ctx context.Context, request *http.Request) (string, bool) {
-	for _, cookie := range cookieCandidates(request.Header.Get("Cookie")) {
-		output, err := runCGI(ctx, authenticateCGI, cgiEnv(request, cookie))
-		if err != nil {
-			continue
-		}
-		if user := strings.TrimSpace(firstLine(output)); user != "" {
-			return user, true
+// maxSessionCookieValues and maxSessionAddresses bound the work of one session
+// check. Both inputs come from the request and every combination runs
+// authenticate.cgi as a child process, so an unauthenticated caller could
+// otherwise force an unbounded number of spawns per request.
+const (
+	maxSessionCookieValues = 3
+	maxSessionAddresses    = 3
+)
+
+// sessionUser resolves the request to a user. It reports the outcome of the
+// best candidate found: an administrator if any candidate is one, otherwise a
+// forbidden non-administrator, otherwise nothing.
+//
+// Two things have to be synthesized exactly: the Cookie header (see
+// cookieCandidates) and the client address. authenticate.cgi is backed by
+// SynoCgiIsAuthorized, which only accepts a session whose recorded login
+// address matches REMOTE_ADDR, so the address nginx saw for the browser is not
+// always the one the session was created with. Every plausible pair is tried in
+// order.
+//
+// A candidate that authenticates as a non-administrator does not end the
+// search: a browser can carry a non-administrator session beside an
+// administrator one, and stopping at the first match would then report
+// "forbidden" to the administrator.
+func (a *Authenticator) sessionUser(ctx context.Context, request *http.Request) (string, outcome) {
+	cookies := cookieCandidates(request.Header.Get("Cookie"))
+	addresses := remoteAddrCandidates(request)
+	if len(cookies) > maxSessionCookieValues {
+		cookies = cookies[:maxSessionCookieValues]
+	}
+	if len(addresses) > maxSessionAddresses {
+		addresses = addresses[:maxSessionAddresses]
+	}
+	nonAdmin := ""
+	for index, cookie := range cookies {
+		for addressIndex, address := range addresses {
+			output, err := runCGI(ctx, authenticateCGI, cgiEnv(request, cookie, address))
+			if err != nil {
+				continue
+			}
+			user := strings.TrimSpace(firstLine(output))
+			if user == "" {
+				continue
+			}
+			if index > 0 || addressIndex > 0 {
+				// Not the first guess: record it, since it reveals which
+				// combination this deployment actually needs.
+				a.log.Printf("DSM 会话校验使用了备用组合（Cookie 序号 %d，客户端地址 %s）", index, address)
+			}
+			if isAdministrator(ctx, user) {
+				return user, outcomeAuthenticated
+			}
+			a.log.Printf("%s 不属于 administrators 组，继续尝试其它会话", user)
+			nonAdmin = user
 		}
 	}
-	return "", false
+	if nonAdmin != "" {
+		// A session resolved, it just is not an administrator.
+		return nonAdmin, outcomeForbidden
+	}
+	return "", outcomeUnauthenticated
+}
+
+// remoteAddrCandidates lists the client addresses a DSM session may have been
+// created with, most likely first.
+func remoteAddrCandidates(request *http.Request) []string {
+	direct := hostOf(request.RemoteAddr)
+	forwarded := strings.TrimSpace(request.Header.Get("X-Real-IP"))
+	local := ""
+	if localAddr, ok := request.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && localAddr != nil {
+		local = hostOf(localAddr.String())
+	}
+	candidates := make([]string, 0, 4)
+	for _, address := range []string{forwarded, direct, local, "127.0.0.1"} {
+		if address != "" && !slices.Contains(candidates, address) {
+			candidates = append(candidates, address)
+		}
+	}
+	return candidates
+}
+
+// hostOf strips the port from a host:port value, passing other values through.
+func hostOf(value string) string {
+	if name, _, err := net.SplitHostPort(value); err == nil {
+		return name
+	}
+	return value
 }
 
 // cookie is one name/value pair of a Cookie header.
@@ -193,24 +267,16 @@ func (a *Authenticator) store(cookie, user string, result outcome) {
 }
 
 // cgiEnv synthesizes the CGI environment DSM modules expect. cookie is the
-// normalized Cookie header of this attempt, which may differ from the one the
-// browser sent (see cookieCandidates).
-func cgiEnv(request *http.Request, cookie string) []string {
+// normalized Cookie header of this attempt (see cookieCandidates) and
+// remoteAddr the client address it is checked against (see
+// remoteAddrCandidates).
+func cgiEnv(request *http.Request, cookie, remoteAddr string) []string {
 	host := request.Host
 	serverName := host
 	serverPort := "443"
 	if name, port, err := net.SplitHostPort(host); err == nil {
 		serverName = name
 		serverPort = port
-	}
-	remoteAddr := request.RemoteAddr
-	if name, _, err := net.SplitHostPort(request.RemoteAddr); err == nil {
-		remoteAddr = name
-	}
-	// DSM's nginx proxies the local API over loopback, so the direct peer is
-	// the proxy. X-Real-IP carries the browser address it saw.
-	if forwarded := strings.TrimSpace(request.Header.Get("X-Real-IP")); forwarded != "" && isLoopback(remoteAddr) {
-		remoteAddr = forwarded
 	}
 	serverAddr := remoteAddr
 	if localAddr, ok := request.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && localAddr != nil {
@@ -268,12 +334,6 @@ func isAdministrator(ctx context.Context, user string) bool {
 		}
 	}
 	return false
-}
-
-// isLoopback reports whether an address belongs to this machine.
-func isLoopback(host string) bool {
-	address := net.ParseIP(host)
-	return address != nil && address.IsLoopback()
 }
 
 func firstLine(value string) string {

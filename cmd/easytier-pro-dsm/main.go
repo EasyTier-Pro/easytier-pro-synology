@@ -155,7 +155,7 @@ func runServe() error {
 	}
 	defer manager.Shutdown()
 
-	auth := dsmenv.New()
+	auth := dsmenv.New(logger)
 	if auth.Bypassed() {
 		logger.Printf("警告：已按开发模式跳过 DSM 登录校验")
 	}
@@ -163,6 +163,11 @@ func runServe() error {
 		Addr:              listenAddr(),
 		Handler:           httpserver.New(manager, client, auth, logger, ui.FS).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		// A session check can run a CGI process per candidate, so bound how
+		// long one connection may occupy a handler.
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 	go func() {
 		<-ctx.Done()

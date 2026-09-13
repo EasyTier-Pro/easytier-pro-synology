@@ -491,6 +491,13 @@ func (m *Manager) installRuntime(ctx context.Context, corePath, cliPath, version
 		return
 	}
 	if settings.Enabled && m.store.HasBootstrapToken() {
+		// The replaced binary does not inherit a file capability granted to the
+		// old one, so what this device is able to do may have just changed.
+		// Negotiate the mode before the core restarts, otherwise the Console
+		// keeps pushing a configuration the new binary cannot honour.
+		syncCtx, cancelSync := context.WithTimeout(ctx, relaySyncTimeout)
+		m.syncRelayModeQuietly(syncCtx)
+		cancelSync()
 		m.writeDownloadStatus(StateRunning, PhaseRestart, 92, "正在重启 EasyTier Pro。", version)
 		m.core.ResetBackoff()
 		if !m.waitForStableCore(ctx) {

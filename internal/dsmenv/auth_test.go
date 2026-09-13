@@ -1,6 +1,8 @@
 package dsmenv
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 )
@@ -52,5 +54,34 @@ func TestParseCookieSkipsMalformedPairs(t *testing.T) {
 	want := []cookie{{name: "did", value: "abc"}, {name: "flag", value: ""}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parseCookie() = %v, want %v", got, want)
+	}
+}
+
+// SynoCgiIsAuthorized only accepts a session whose recorded login address
+// matches REMOTE_ADDR, so the address nginx reports must not be the only one
+// tried: the forwarded client address is preferred, then the direct peer.
+func TestRemoteAddrCandidatesOrder(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	request.RemoteAddr = "127.0.0.1:41234"
+	request.Header.Set("X-Real-IP", "10.0.0.5")
+	got := remoteAddrCandidates(request)
+	if len(got) < 2 || got[0] != "10.0.0.5" || got[1] != "127.0.0.1" {
+		t.Fatalf("remoteAddrCandidates() = %q, want the forwarded address first", got)
+	}
+}
+
+func TestRemoteAddrCandidatesSkipsDuplicates(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	request.RemoteAddr = "10.0.0.5:41234"
+	request.Header.Set("X-Real-IP", "10.0.0.5")
+	got := remoteAddrCandidates(request)
+	seen := map[string]int{}
+	for _, address := range got {
+		seen[address]++
+	}
+	for address, count := range seen {
+		if count > 1 {
+			t.Fatalf("address %q appears %d times in %q", address, count, got)
+		}
 	}
 }

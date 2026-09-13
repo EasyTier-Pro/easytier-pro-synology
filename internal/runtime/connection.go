@@ -115,8 +115,9 @@ func (m *Manager) NetworkJoin(ctx context.Context, networkID string) (Operation,
 			return false, aerr
 		}
 		// The Console has just created the node for this device; make sure the
-		// runtime configuration it pushes matches what the core can do.
-		m.syncRelayModeQuietly(ctx)
+		// runtime configuration it pushes matches what the core can do. The
+		// node may need a moment to show up, so this retries.
+		m.syncRelayModeRetrying(ctx)
 		return false, nil
 	})
 	return operation, nil

@@ -126,8 +126,11 @@ func (c *Client) SetNodeNoTun(ctx context.Context, networkID string, enabled boo
 		return false, aerr
 	}
 	if nodeID == "" {
-		// No node in this network yet; nothing to configure.
-		return false, nil
+		// The machine is listed as a member of this network but the network
+		// does not report its node. Reporting this rather than succeeding keeps
+		// a transient inconsistency from silently leaving the device on a mode
+		// its core cannot honour.
+		return false, apperr.New(apperr.CodeNodeLookupFailed)
 	}
 	status, payload, aerr := c.request(ctx, http.MethodGet,
 		tenantPath(workspaceID, "/nodes/"+nodeID+"/config"), nil, "application/json", "")

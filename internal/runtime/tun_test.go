@@ -6,14 +6,26 @@ import (
 )
 
 // fileCapability builds a security.capability xattr value (struct vfs_cap_data:
-// a u32 magic_etc followed by two {permitted, inheritable} u32 pairs).
+// a u32 magic_etc followed by two {permitted, inheritable} u32 pairs). The
+// effective flag is set, as `setcap ...+ep` does.
 func fileCapability(permitted ...uint32) []byte {
 	buffer := make([]byte, 20)
 	buffer[0] = 0x02 // VFS_CAP_REVISION_2
+	binary.LittleEndian.PutUint32(buffer, 0x02|capFlagsEffective)
 	for word, bits := range permitted {
 		binary.LittleEndian.PutUint32(buffer[4+word*8:], bits)
 	}
 	return buffer
+}
+
+// setcap without "e" grants the capability only to the permitted set, which a
+// non-root exec cannot use, so it must not be reported as usable.
+func TestParseFileCapabilityRequiresEffectiveFlag(t *testing.T) {
+	data := fileCapability(1<<capNetAdmin, 0)
+	binary.LittleEndian.PutUint32(data, 0x02) // clear VFS_CAP_FLAGS_EFFECTIVE
+	if parseFileCapability(data, capNetAdmin) {
+		t.Fatal("a capability without the effective flag was reported as usable")
+	}
 }
 
 func TestParseFileCapabilityDetectsGrantedCapability(t *testing.T) {

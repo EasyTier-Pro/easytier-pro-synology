@@ -118,12 +118,13 @@ func checkSameOrigin(r *http.Request) *apperr.Error {
 	return nil
 }
 
-// hostnameOf strips an optional port from a Host header value.
+// hostnameOf strips an optional port and IPv6 brackets from a Host value, so it
+// compares equal to the hostname url.URL reports for the same address.
 func hostnameOf(host string) string {
 	if name, _, err := net.SplitHostPort(host); err == nil {
-		return name
+		host = name
 	}
-	return host
+	return strings.Trim(host, "[]")
 }
 
 // logAuthorizationFailure records why a request was rejected. Cookie values are

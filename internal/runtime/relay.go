@@ -11,6 +11,12 @@ import (
 // background housekeeping, never a user-visible action.
 const relaySyncTimeout = 30 * time.Second
 
+// Relay-mode sync retry policy, used right after a node is created.
+const (
+	relaySyncAttempts   = 3
+	relaySyncRetryDelay = 2 * time.Second
+)
+
 // RelayMode reports whether the local core has to run without a TUN device.
 //
 // DSM never runs a package as root, so the downloaded core only obtains
@@ -43,10 +49,18 @@ func (m *Manager) SyncRelayMode(ctx context.Context) *apperr.Error {
 	if aerr != nil {
 		return aerr
 	}
+	// Every network is attempted even after a failure: stopping at the first
+	// error would leave the rest on a stale mode and, since the networks are
+	// visited in the same order every time, could keep them there forever.
+	var firstError *apperr.Error
 	for _, networkID := range networks {
 		changed, aerr := m.cli.SetNodeNoTun(ctx, networkID, relay)
 		if aerr != nil {
-			return aerr
+			m.log.Errorf("同步网络 %s 的运行模式失败: %s", networkID, aerr.Message)
+			if firstError == nil {
+				firstError = aerr
+			}
+			continue
 		}
 		if changed {
 			if relay {
@@ -56,13 +70,33 @@ func (m *Manager) SyncRelayMode(ctx context.Context) *apperr.Error {
 			}
 		}
 	}
-	return nil
+	return firstError
 }
 
 // syncRelayModeQuietly runs SyncRelayMode for callers that must not fail.
 func (m *Manager) syncRelayModeQuietly(ctx context.Context) {
 	if err := m.SyncRelayMode(ctx); err != nil {
 		m.log.Errorf("同步本机运行模式到 Console 失败: %s", err.Message)
+	}
+}
+
+// syncRelayModeRetrying retries the sync a few times. It exists for the moment
+// right after a node is created, when the Console may not list the new node yet.
+func (m *Manager) syncRelayModeRetrying(ctx context.Context) {
+	for attempt := 0; ; attempt++ {
+		aerr := m.SyncRelayMode(ctx)
+		if aerr == nil {
+			return
+		}
+		if attempt >= relaySyncAttempts-1 || ctx.Err() != nil {
+			m.log.Errorf("同步本机运行模式到 Console 失败: %s", aerr.Message)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(relaySyncRetryDelay):
+		}
 	}
 }
 
