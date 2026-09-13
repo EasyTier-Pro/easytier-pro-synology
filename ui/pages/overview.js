@@ -3,24 +3,14 @@ import {
 	h, card, table, detailList, button, banner, modal, notify, loading, valueOrDash,
 } from '../lib/dom.js';
 import { api, needsRelogin, consoleWebURL } from '../lib/api.js';
+import { createTimerScope } from '../lib/timers.js';
 
-// 页面持有的全部轮询定时器；unmount 时统一清理，避免路由切换后泄漏。
-const timers = new Set();
-// aborted prevents a request that is already in flight from scheduling new
-// work after the page was left.
-let aborted = false;
-
-function after(delay, callback) {
-	if (aborted) {
-		return 0;
-	}
-	const id = window.setTimeout(() => {
-		timers.delete(id);
-		callback();
-	}, delay);
-	timers.add(id);
-	return id;
-}
+// Poll timers are owned by a scope so that leaving the page stops them, while
+// coming back to the page can start polling again. The overview polls during
+// several steps (device login, connection changes, runtime install), so a
+// one-way stop would leave a later visit unable to report progress at all.
+const timerScope = createTimerScope();
+const { after } = timerScope;
 
 /** 以给定初始延迟轮询一个会异步完成的本机操作，直到完成或失败。 */
 function pollOperation(operationID, handlers, initialDelay = 1200) {
@@ -60,11 +50,7 @@ function pollOperation(operationID, handlers, initialDelay = 1200) {
 }
 
 export function unmount() {
-	aborted = true;
-	for (const id of timers) {
-		window.clearTimeout(id);
-	}
-	timers.clear();
+	timerScope.invalidate();
 }
 
 function messageOf(error) {
