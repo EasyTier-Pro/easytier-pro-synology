@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -339,25 +340,26 @@ func processAlive(proc *os.Process) bool {
 	return proc.Signal(syscall.Signal(0)) == nil
 }
 
-// apiHealthy reports whether the core management RPC answers. A core that is
-// up but not joined to any network is healthy too; that state is reported on
-// stderr, so both streams are read.
+// apiHealthy reports whether the core is up and its management portal is
+// accepting connections.
+//
+// It deliberately says nothing about the network instances the core runs. The
+// previous implementation asked easytier-cli for node information and treated
+// anything but "no running instances found" as a failure, so one instance whose
+// configuration the device cannot honour - an instance created with TUN enabled
+// on a host that may not create it - made the whole core look dead. That turned
+// into failed runtime installs and rolled back connection changes, even though
+// the core process was running and serving. Instance problems are diagnosed and
+// repaired through the Console instead (see Manager.SyncRelayMode).
 func (m *Manager) apiHealthy(ctx context.Context) bool {
-	cli := m.paths.CLIbinary()
-	if !isExecutable(cli) {
+	dialCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", rpcPortalAddress)
+	if err != nil {
 		return false
 	}
-	output, err := combinedCommandOutput(ctx, 10*time.Second, downloadMaxVersionBytes, cli,
-		"-p", rpcPortalAddress, "-o", "json", "node", "info")
-	if err == nil {
-		return true
-	}
-	for _, line := range strings.Split(output, "\n") {
-		if strings.TrimSpace(line) == "Error: no running instances found" {
-			return true
-		}
-	}
-	return false
+	_ = conn.Close()
+	return true
 }
 
 func (m *Manager) writeCorePID(pid int) {

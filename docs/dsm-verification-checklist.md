@@ -144,6 +144,13 @@ DSM 不允许第三方套件以 root 运行，也无从获得 capability，因�
    `sudo setcap cap_net_admin,cap_net_raw+ep <运行时目录>/easytier-core`
    （`CAP_NET_ADMIN` 建虚拟网卡，`CAP_NET_RAW` 绑定网卡；缺后者则连不上 peer）。
 3. **重新下载运行时后**：新二进制会丢失文件能力，守护进程会自动重新写入 `no_tun`，无需手工判断。
+4. **在 Console 上直接挂载本机会默认开启 TUN**：Console 新建节点时 `no_tun` 默认为 `false`，而本机
+   没有 `CAP_NET_ADMIN`，于是 core 会拿到一个自己无法满足的实例配置（实例注册成功但服务不可用，
+   `easytier-cli` 报 `Instance not found or API service not available`）。
+   守护进程会在**启动时、加入网络后、安装运行时后**同步该配置，并且**每 90 秒复查一次**
+   （`relayWatchInterval`），因此在 Console 侧做出的改动会在一个周期内被自动纠正。
+   实测：把节点的 `no_tun` 手动改成 `false` 后，约 80 秒内被守护进程改回 `true`，实例随之恢复、
+   重新连上 5 个 peer。
 
 **为什么必须写 Console，而不是启动参数**：`--no-tun` 加在 `easytier-core` 命令行上没有任何效果。
 secure mode 下 core 自身不建网络（`crate_cli_network` 为 false），实例配置全部由 Console 下发；

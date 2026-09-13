@@ -17,6 +17,15 @@ const (
 	relaySyncRetryDelay = 2 * time.Second
 )
 
+// relayWatchInterval is how often the Console configuration is re-checked.
+//
+// The mode can be changed from the Console at any time - attaching this machine
+// to a network there creates a node with TUN enabled by default, which this
+// host cannot honour, and that used to leave the instance broken with nothing
+// to correct it. Re-checking on a timer converges on the right configuration
+// without depending on which side made the change.
+const relayWatchInterval = 90 * time.Second
+
 // RelayMode reports whether the local core has to run without a TUN device.
 //
 // DSM never runs a package as root, so the downloaded core only obtains
@@ -101,11 +110,24 @@ func (m *Manager) syncRelayModeRetrying(ctx context.Context) {
 }
 
 // startRelayModeSync keeps the Console setting aligned in the background, so
-// startup never waits on the Console.
+// startup never waits on the Console, and keeps re-checking it afterwards.
 func (m *Manager) startRelayModeSync(ctx context.Context) {
 	go func() {
 		syncCtx, cancel := context.WithTimeout(ctx, relaySyncTimeout)
-		defer cancel()
 		m.syncRelayModeQuietly(syncCtx)
+		cancel()
+
+		ticker := time.NewTicker(relayWatchInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				watchCtx, cancelWatch := context.WithTimeout(ctx, relaySyncTimeout)
+				m.syncRelayModeQuietly(watchCtx)
+				cancelWatch()
+			}
+		}
 	}()
 }
