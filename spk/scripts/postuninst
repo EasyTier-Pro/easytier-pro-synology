@@ -1,6 +1,6 @@
 #!/bin/sh
 # Remove everything this client stored: enrollment token, Console session,
-# machine identity, downloaded runtime and logs.
+# machine identity, downloaded runtime, cached archive and logs.
 #
 # DSM also runs this script while upgrading (SYNOPKG_PKG_STATUS=UPGRADE), so the
 # state may only be deleted for a real uninstall.
@@ -9,7 +9,7 @@ case "$SYNOPKG_PKG_STATUS" in
 	UPGRADE) exit 0 ;;
 esac
 
-for sub in state runtime logs run; do
+for sub in state runtime logs run cache; do
 	if [ -e "$SYNOPKG_PKGVAR/$sub" ] && ! rm -rf "$SYNOPKG_PKGVAR/$sub"; then
 		echo "无法删除 $SYNOPKG_PKGVAR/$sub，请检查权限后重试。" >&2
 		exit 1
