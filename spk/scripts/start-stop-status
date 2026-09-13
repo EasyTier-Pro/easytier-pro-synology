@@ -1,4 +1,6 @@
 #!/bin/sh
+umask 077
+
 # Package lifecycle script. `status` exits 0 while the daemon runs and 3 when it
 # does not, which is what DSM expects for precheckstartstop.
 
@@ -13,6 +15,8 @@ daemon_pid() {
 		''|*[!0-9]*) return 1 ;;
 	esac
 	kill -0 "$pid" 2>/dev/null || return 1
+	# Reject a recycled pid: only accept a process running our daemon.
+	tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -q "$DAEMON" || return 1
 	printf '%s' "$pid"
 }
 

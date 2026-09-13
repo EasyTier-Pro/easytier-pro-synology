@@ -48,6 +48,10 @@ func AtomicWrite(path string, data []byte, perm os.FileMode) error {
 	return nil
 }
 
+// SyncDir flushes a directory entry so that renames and removals survive a
+// power loss.
+func SyncDir(dir string) { syncDir(dir) }
+
 // syncDir flushes a directory entry so that a rename survives a power loss.
 func syncDir(dir string) {
 	f, err := os.Open(dir)

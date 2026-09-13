@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/EasyTier-Pro/easytier-pro-dsm/internal/apperr"
 	"github.com/EasyTier-Pro/easytier-pro-dsm/internal/config"
@@ -19,6 +21,10 @@ import (
 
 // maxBodyBytes bounds request bodies.
 const maxBodyBytes = 64 << 10
+
+// requestMarkerHeader must accompany state-changing requests. A cross-origin
+// page cannot set it without a CORS preflight, which this API never allows.
+const requestMarkerHeader = "X-Easytier-Request"
 
 // Server routes the local API and serves the bundled UI.
 type Server struct {
@@ -70,6 +76,10 @@ func (s *Server) Handler() http.Handler {
 // administrator session.
 func (s *Server) requireDSMSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if aerr := checkSameOrigin(r); aerr != nil {
+			writeErrorStatus(w, http.StatusForbidden, aerr)
+			return
+		}
 		user, aerr := s.auth.Authenticate(r.Context(), r)
 		if aerr != nil {
 			status := http.StatusUnauthorized
@@ -82,6 +92,25 @@ func (s *Server) requireDSMSession(next http.Handler) http.Handler {
 		s.log.Printf("本机 API %s %s（用户 %s）", r.Method, r.URL.Path, user)
 		next.ServeHTTP(w, r)
 	})
+}
+
+// checkSameOrigin protects state-changing requests from being triggered by
+// another site with the browser's DSM cookie.
+func checkSameOrigin(r *http.Request) *apperr.Error {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return nil
+	}
+	if r.Header.Get(requestMarkerHeader) != "1" {
+		return apperr.New(apperr.CodeInvalidRequest)
+	}
+	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" {
+		parsed, err := url.Parse(origin)
+		if err != nil || parsed.Host != r.Host {
+			return apperr.New(apperr.CodeInvalidRequest)
+		}
+	}
+	return nil
 }
 
 func (s *Server) staticHandler() http.Handler {

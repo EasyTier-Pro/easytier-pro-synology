@@ -284,6 +284,9 @@ func (m *Manager) commitConnectionTransactionLocked() error {
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	// The removal must be durable before the only token backup goes away,
+	// otherwise a power loss could resurrect the transaction without it.
+	config.SyncDir(m.paths.StateDir())
 	if backup != "" {
 		os.Remove(backup)
 	}
@@ -347,12 +350,16 @@ func (m *Manager) recoverConnectionStateLocked(ctx context.Context) error {
 	if err := m.store.SaveSettings(settings); err != nil {
 		return err
 	}
-	if transaction.WasRunning && transaction.PreviousEnabled {
-		m.core.EnsureHealthy(ctx)
-	}
 	os.Remove(transaction.BackupToken)
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
+	}
+	config.SyncDir(m.paths.StateDir())
+	// Restore the previous connection whenever it was enabled and complete,
+	// even if the core happened to be between restarts when the change began.
+	if settings.Enabled && m.store.HasBootstrapToken() &&
+		config.ValidConfigServer(settings.ConfigServer) && isExecutable(m.paths.CoreBinary()) {
+		m.core.EnsureHealthy(ctx)
 	}
 	return nil
 }

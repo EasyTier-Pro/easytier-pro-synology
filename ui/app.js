@@ -10,6 +10,7 @@ const routes = [
 ];
 
 let activePage = null;
+let renderGeneration = 0;
 
 function currentRouteID() {
 	const raw = window.location.hash.replace(/^#\/?/, '');
@@ -44,6 +45,7 @@ async function renderRoute() {
 	if (!view) {
 		return;
 	}
+	const generation = ++renderGeneration;
 	const activeID = currentRouteID();
 	const route = routes.find((entry) => entry.id === activeID) || routes[0];
 	if (activePage && typeof activePage.unmount === 'function') {
@@ -58,10 +60,17 @@ async function renderRoute() {
 	mount(view, loading());
 	try {
 		const module = await route.load();
+		const content = await module.render();
+		if (generation !== renderGeneration) {
+			// The user navigated away while this page was loading.
+			return;
+		}
 		activePage = module;
-		mount(view, await module.render());
+		mount(view, content);
 	} catch (error) {
-		mount(view, errorBox(messageOf(error), renderRoute));
+		if (generation === renderGeneration) {
+			mount(view, errorBox(messageOf(error), renderRoute));
+		}
 	}
 }
 

@@ -619,6 +619,15 @@ func downloadHTTPClient() *http.Client {
 			TLSHandshakeTimeout:   10 * time.Second,
 			ResponseHeaderTimeout: 30 * time.Second,
 		},
+		CheckRedirect: func(next *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("too many redirects")
+			}
+			if next.URL.Scheme != "https" {
+				return errors.New("refusing to follow a redirect to an insecure scheme")
+			}
+			return nil
+		},
 	}
 }
 
@@ -782,11 +791,15 @@ func (m *Manager) writeUpdateTransaction(transaction updateTransaction) error {
 	return config.AtomicWrite(m.paths.UpdateTransactionFile(), data, 0o600)
 }
 
-// commitUpdateTransaction drops the rollback data of a finished update.
+// commitUpdateTransaction drops the rollback data of a finished update. The
+// runtime directory and the transaction removal are flushed first, so a power
+// loss cannot resurrect a transaction whose backups are already gone.
 func (m *Manager) commitUpdateTransaction(transaction updateTransaction) error {
+	config.SyncDir(m.paths.RuntimeDir())
 	if err := os.Remove(m.paths.UpdateTransactionFile()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	config.SyncDir(m.paths.StateDir())
 	os.Remove(transaction.BackupCore)
 	os.Remove(transaction.BackupCLI)
 	return nil

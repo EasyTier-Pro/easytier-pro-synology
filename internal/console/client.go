@@ -269,7 +269,14 @@ func (c *Client) call(ctx context.Context, method, path, accessToken string, bod
 	if body != nil {
 		request.Header.Set("Content-Type", contentType)
 	}
-	response, err := c.http.Do(request)
+	client := *c.http
+	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return errors.New("too many redirects")
+		}
+		return checkRedirect(next, via[0])
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		if ctx.Err() != nil {
 			return 0, nil, apperr.New(apperr.CodeConsoleUnreachable)
@@ -318,6 +325,22 @@ func (c *Client) workspaceID() (string, *apperr.Error) {
 
 func tenantPath(workspaceID, suffix string) string {
 	return fmt.Sprintf("/api/v1/tenants/%s%s", workspaceID, suffix)
+}
+
+// checkRedirect keeps a Console request on the scheme it was validated with:
+// an HTTPS endpoint never downgrades, and authorization is only replayed to
+// the same origin.
+func checkRedirect(next *http.Request, original *http.Request) error {
+	if original.URL.Scheme == "https" && next.URL.Scheme != "https" {
+		return errors.New("refusing to follow a redirect to an insecure scheme")
+	}
+	if next.URL.Scheme != "https" && next.URL.Scheme != "http" {
+		return errors.New("refusing to follow a redirect to an unsupported scheme")
+	}
+	if next.URL.Host != original.URL.Host && next.Header.Get("Authorization") != "" {
+		return errors.New("refusing to send credentials to another host")
+	}
+	return nil
 }
 
 // errNoEnrollmentKey marks a missing or unusable enrollment key.

@@ -35,7 +35,7 @@ const (
 	respawnWindow = 3600 * time.Second
 	respawnDelay  = 5 * time.Second
 	respawnLimit  = 5
-	killDelay     = 10 * time.Second
+	killDelay     = 30 * time.Second
 	shutdownGrace = 10 * time.Second
 )
 
@@ -166,6 +166,9 @@ func runServe() error {
 	}
 	go func() {
 		<-ctx.Done()
+		// Stop the privileged core first: the supervisor only allows the
+		// process a bounded time to exit.
+		manager.Shutdown()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)

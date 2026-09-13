@@ -127,11 +127,23 @@ func (s *coreSupervisor) run() {
 		}
 		s.m.log.Printf("EasyTier core 已启动，PID %d", cmd.Process.Pid)
 		exited := make(chan struct{})
+		waited := make(chan error, 1)
+		go func() {
+			waited <- cmd.Wait()
+			close(exited)
+		}()
 		s.setProcess(cmd.Process, exited)
 		startedAt := time.Now()
-		s.awaitHealthy(cmd.Process)
-		waitErr := cmd.Wait()
-		close(exited)
+		if !s.isDesired() {
+			// A stop ran while the child was being created.
+			s.terminate(cmd.Process)
+		} else if !s.awaitHealthy(exited) {
+			// The core is alive but its management API never answered;
+			// replace it instead of holding it forever.
+			s.m.log.Errorf("EasyTier core 未在预期时间内就绪，重新启动")
+			s.terminate(cmd.Process)
+		}
+		waitErr := <-waited
 		s.clearProcess()
 		s.m.removeCorePID()
 
@@ -183,21 +195,36 @@ func (s *coreSupervisor) startProcess() (*exec.Cmd, error) {
 
 // awaitHealthy reports whether the management API became reachable before the
 // process exited or the attempt budget ran out.
-func (s *coreSupervisor) awaitHealthy(proc *os.Process) bool {
+func (s *coreSupervisor) awaitHealthy(exited <-chan struct{}) bool {
 	for attempt := 0; attempt < healthAttempts; attempt++ {
-		if !processAlive(proc) {
-			return false
-		}
 		if s.m.apiHealthy(s.ctx) {
 			return true
 		}
 		select {
+		case <-exited:
+			return false
 		case <-s.ctx.Done():
 			return false
 		case <-time.After(time.Second):
 		}
 	}
 	return false
+}
+
+// terminate stops one child, escalating to SIGKILL.
+func (s *coreSupervisor) terminate(proc *os.Process) {
+	if !processAlive(proc) {
+		return
+	}
+	_ = proc.Signal(syscall.SIGTERM)
+	deadline := time.Now().Add(closeTimeout)
+	for time.Now().Before(deadline) {
+		if !processAlive(proc) {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	_ = proc.Kill()
 }
 
 // EnsureHealthy asks the supervisor to run the core and waits until the
@@ -229,6 +256,12 @@ func (s *coreSupervisor) StopAndWait(ctx context.Context) {
 	s.mu.Unlock()
 	s.signal()
 	if proc == nil || exited == nil {
+		// The supervisor may be publishing a child right now; wait for its
+		// loop to notice that the core is no longer desired.
+		deadline := time.Now().Add(closeTimeout)
+		for time.Now().Before(deadline) && s.Running() {
+			time.Sleep(100 * time.Millisecond)
+		}
 		return
 	}
 	_ = proc.Signal(syscall.SIGTERM)
@@ -279,9 +312,19 @@ func (s *coreSupervisor) sleep(duration time.Duration) {
 	}
 }
 
+// processAlive reports whether the process still runs. A child that exited but
+// has not been reaped yet is a zombie and does not count as running.
 func processAlive(proc *os.Process) bool {
 	if proc == nil {
 		return false
+	}
+	if data, err := os.ReadFile("/proc/" + strconv.Itoa(proc.Pid) + "/stat"); err == nil {
+		text := string(data)
+		if index := strings.LastIndex(text, ")"); index >= 0 {
+			if fields := strings.Fields(text[index+1:]); len(fields) > 0 && fields[0] == "Z" {
+				return false
+			}
+		}
 	}
 	return proc.Signal(syscall.Signal(0)) == nil
 }

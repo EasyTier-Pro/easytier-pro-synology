@@ -6,8 +6,14 @@ import { api, needsRelogin, consoleWebURL } from '../lib/api.js';
 
 // 页面持有的全部轮询定时器；unmount 时统一清理，避免路由切换后泄漏。
 const timers = new Set();
+// aborted prevents a request that is already in flight from scheduling new
+// work after the page was left.
+let aborted = false;
 
 function after(delay, callback) {
+	if (aborted) {
+		return 0;
+	}
 	const id = window.setTimeout(() => {
 		timers.delete(id);
 		callback();
@@ -54,6 +60,7 @@ function pollOperation(operationID, handlers, initialDelay = 1200) {
 }
 
 export function unmount() {
+	aborted = true;
 	for (const id of timers) {
 		window.clearTimeout(id);
 	}
@@ -111,7 +118,8 @@ function localIPv4(summary) {
 		const items = Array.isArray(node) ? node
 			: (Array.isArray(node.result) ? node.result : []);
 		for (const item of items) {
-			const found = match(item);
+			// Multi-instance output wraps each instance in a result object.
+			const found = match(item) || match(item && item.result);
 			if (found) {
 				return found;
 			}
@@ -231,7 +239,9 @@ export async function render() {
 			host.replaceChildren(renderFirstUse({ reset }));
 			return;
 		}
-		if (!status.token_present || !status.workspace_id) {
+		if (!status.token_present) {
+			// A device token alone is a complete setup: only users who have
+			// not connected yet need to choose a workspace.
 			host.replaceChildren(renderWorkspaceSetup({ reset, loggedIn }));
 			return;
 		}

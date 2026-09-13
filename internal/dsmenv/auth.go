@@ -36,9 +36,18 @@ type Authenticator struct {
 	cache map[string]entry
 }
 
+// outcome is the cached result of one session check.
+type outcome int
+
+const (
+	outcomeUnauthenticated outcome = iota
+	outcomeAuthenticated
+	outcomeForbidden
+)
+
 type entry struct {
 	user    string
-	ok      bool
+	result  outcome
 	expires time.Time
 }
 
@@ -61,48 +70,52 @@ func (a *Authenticator) Authenticate(ctx context.Context, request *http.Request)
 	if strings.TrimSpace(cookie) == "" {
 		return "", apperr.New(apperr.CodeDSMAuthRequired)
 	}
-	if user, ok, cached := a.cached(cookie); cached {
-		if !ok {
+	if user, result, cached := a.cached(cookie); cached {
+		switch result {
+		case outcomeAuthenticated:
+			return user, nil
+		case outcomeForbidden:
+			return "", apperr.New(apperr.CodeDSMAuthForbidden)
+		default:
 			return "", apperr.New(apperr.CodeDSMAuthRequired)
 		}
-		return user, nil
 	}
 	user, err := runCGI(ctx, authenticateCGI, cgiEnv(request))
 	if err != nil {
-		a.store(cookie, "", false)
+		a.store(cookie, "", outcomeUnauthenticated)
 		return "", apperr.New(apperr.CodeDSMAuthRequired)
 	}
 	user = strings.TrimSpace(firstLine(user))
 	if user == "" {
-		a.store(cookie, "", false)
+		a.store(cookie, "", outcomeUnauthenticated)
 		return "", apperr.New(apperr.CodeDSMAuthRequired)
 	}
 	if !isAdministrator(ctx, user) {
-		a.store(cookie, user, false)
+		a.store(cookie, user, outcomeForbidden)
 		return "", apperr.New(apperr.CodeDSMAuthForbidden)
 	}
-	a.store(cookie, user, true)
+	a.store(cookie, user, outcomeAuthenticated)
 	return user, nil
 }
 
-func (a *Authenticator) cached(cookie string) (string, bool, bool) {
+func (a *Authenticator) cached(cookie string) (string, outcome, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	found, ok := a.cache[cookie]
 	if !ok || time.Now().After(found.expires) {
 		delete(a.cache, cookie)
-		return "", false, false
+		return "", outcomeUnauthenticated, false
 	}
-	return found.user, found.ok, true
+	return found.user, found.result, true
 }
 
-func (a *Authenticator) store(cookie, user string, ok bool) {
+func (a *Authenticator) store(cookie, user string, result outcome) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if len(a.cache) > 512 {
 		a.cache = map[string]entry{}
 	}
-	a.cache[cookie] = entry{user: user, ok: ok, expires: time.Now().Add(cacheTTL)}
+	a.cache[cookie] = entry{user: user, result: result, expires: time.Now().Add(cacheTTL)}
 }
 
 // cgiEnv synthesizes the CGI environment DSM modules expect.
@@ -117,6 +130,11 @@ func cgiEnv(request *http.Request) []string {
 	remoteAddr := request.RemoteAddr
 	if name, _, err := net.SplitHostPort(request.RemoteAddr); err == nil {
 		remoteAddr = name
+	}
+	// DSM's nginx proxies the local API over loopback, so the direct peer is
+	// the proxy. X-Real-IP carries the browser address it saw.
+	if forwarded := strings.TrimSpace(request.Header.Get("X-Real-IP")); forwarded != "" && isLoopback(remoteAddr) {
+		remoteAddr = forwarded
 	}
 	serverAddr := remoteAddr
 	if localAddr, ok := request.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && localAddr != nil {
@@ -174,6 +192,12 @@ func isAdministrator(ctx context.Context, user string) bool {
 		}
 	}
 	return false
+}
+
+// isLoopback reports whether an address belongs to this machine.
+func isLoopback(host string) bool {
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
 }
 
 func firstLine(value string) string {

@@ -57,8 +57,13 @@ func (m *Manager) Start(ctx context.Context) error {
 		return err
 	}
 	// The supervisor must exist before recovery: rolling a transaction back
-	// stops the core.
+	// stops the core. A core left over from a killed daemon is stopped first,
+	// so recovery never mutates state under a running tunnel.
 	m.core = newCoreSupervisor(m, ctx)
+	// The loop idles until something asks for the core, so recovery can use
+	// EnsureHealthy while remaining the only writer of the restored state.
+	m.core.Start()
+	m.stopStaleCore()
 	if err := m.recoverUpdateFiles(ctx, true); err != nil {
 		m.log.Errorf("恢复运行时更新失败: %v", err)
 	}
@@ -68,11 +73,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err := m.cleanupOrphanRuntimeFiles(); err != nil {
 		m.log.Errorf("清理残留运行时文件失败: %v", err)
 	}
-	m.stopStaleCore()
 	m.dl.recoverStatus()
 	m.log.Printf("EasyTier Pro 已启动，运行目录 %s", m.paths.RuntimeDir())
 
-	m.core.Start()
 	m.ops.Start(ctx)
 	m.refreshDesired()
 	return nil

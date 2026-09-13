@@ -3,7 +3,10 @@
 # machine identity, downloaded runtime and logs.
 
 for sub in state runtime logs run; do
-	rm -rf "$SYNOPKG_PKGVAR/$sub"
+	if [ -e "$SYNOPKG_PKGVAR/$sub" ] && ! rm -rf "$SYNOPKG_PKGVAR/$sub"; then
+		echo "无法删除 $SYNOPKG_PKGVAR/$sub，请检查权限后重试。" >&2
+		exit 1
+	fi
 done
 
 exit 0

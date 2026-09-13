@@ -64,7 +64,11 @@ export function needsRelogin(error) {
 }
 
 async function request(path, options = {}) {
-	const init = { method: options.method || 'GET', headers: {}, credentials: 'same-origin' };
+	const init = {
+		method: options.method || 'GET',
+		headers: { 'X-Easytier-Request': '1' },
+		credentials: 'same-origin',
+	};
 	if (options.body !== undefined) {
 		init.headers['Content-Type'] = 'application/json';
 		init.body = JSON.stringify(options.body);

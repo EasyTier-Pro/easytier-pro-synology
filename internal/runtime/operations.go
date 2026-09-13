@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/EasyTier-Pro/easytier-pro-dsm/internal/apperr"
@@ -82,7 +83,7 @@ func (s *operationSet) Start(ctx context.Context) {
 	entries, err := os.ReadDir(s.dir)
 	if err == nil {
 		for _, entry := range entries {
-			operation, err := s.load(entry.Name())
+			operation, err := s.load(strings.TrimSuffix(entry.Name(), ".json"))
 			if err != nil {
 				os.Remove(filepath.Join(s.dir, entry.Name()))
 				continue
@@ -120,7 +121,7 @@ func (s *operationSet) expire() {
 		if entry.IsDir() {
 			continue
 		}
-		operation, err := s.load(entry.Name())
+		operation, err := s.load(strings.TrimSuffix(entry.Name(), ".json"))
 		if err != nil {
 			os.Remove(filepath.Join(s.dir, entry.Name()))
 			continue

@@ -139,7 +139,14 @@ func (s *Store) RemoveBootstrapToken() error {
 }
 
 // MachineID returns the persistent device identity, creating it on first use.
+// The store mutex serializes creation so every caller sees the same id.
 func (s *Store) MachineID() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.machineIDLocked()
+}
+
+func (s *Store) machineIDLocked() (string, error) {
 	data, err := os.ReadFile(s.paths.MachineIDFile())
 	if err == nil {
 		value := trimNewline(string(data))

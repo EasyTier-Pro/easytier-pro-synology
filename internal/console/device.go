@@ -149,7 +149,10 @@ func (c *Client) AuthPoll(ctx context.Context) (DeviceAuthPollResult, *apperr.Er
 		if !config.ValidSecret(session.AccessToken) {
 			return DeviceAuthPollResult{}, apperr.New(apperr.CodeInvalidConsoleResponse)
 		}
-		if err := c.writeSession(session); err != nil {
+		c.mu.Lock()
+		writeErr := c.writeSession(session)
+		c.mu.Unlock()
+		if writeErr != nil {
 			return DeviceAuthPollResult{}, apperr.New(apperr.CodeStateUnavailable)
 		}
 		c.removeDeviceAuth()
