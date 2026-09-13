@@ -17,7 +17,7 @@ jobs:
       - name: Test
         run: go test ./...
       - name: Check the interface
-        run: node --test ui/lib/*.test.mjs
+        run: node --test ui/lib/*.test.mjs ui/pages/*.test.mjs
       - name: Check shell scripts
         run: |
           for script in spk/scripts/* scripts/*.sh; do

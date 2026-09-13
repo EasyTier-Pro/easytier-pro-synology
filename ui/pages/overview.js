@@ -232,14 +232,14 @@ export async function render() {
 			return;
 		}
 		if (!status.core_installed || !status.cli_installed) {
-			host.replaceChildren(renderRuntimeSetup(download, { reset }));
+			host.replaceChildren(renderRuntimeSetup(status, download, { reset, loggedIn }));
 			if (download.state === 'queued' || download.state === 'running') {
-				pollDownload(host, { reset });
+				pollDownload(host, status, { reset, loggedIn });
 			}
 			return;
 		}
 		if (!status.running) {
-			host.replaceChildren(renderServiceStopped(status, { reset }));
+			host.replaceChildren(renderServiceStopped(status, { reset, loggedIn }));
 			return;
 		}
 		host.replaceChildren(loading('正在读取本机连接状态…'));
@@ -331,8 +331,34 @@ function renderWorkspaceSetup({ reset, loggedIn }) {
 	return card('完成本机设置', children, '账号已连接，还差最后一步');
 }
 
+/* 账号与本机操作。每个状态都要能进入，否则用户会被卡在当前步骤里：
+   例如运行时尚未安装时，除了继续安装没有别的出路，也无法退出登录换账号。 */
+function accountCard(status, { reset, loggedIn }, { disconnect = true } = {}) {
+	const buttons = [];
+	if (status && status.console_url) {
+		buttons.push(button('打开 Console', {
+			variant: 'primary',
+			onclick: () => window.open(consoleWebURL(status.console_url), '_blank', 'noopener'),
+		}));
+	}
+	if (loggedIn) {
+		buttons.push(button('退出 Console 登录', { onclick: () => confirmLogout(reset) }));
+	}
+	if (disconnect) {
+		buttons.push(button('断开本机', { variant: 'danger', onclick: () => confirmDisconnect(reset) }));
+	}
+	const notes = [ '「退出 Console 登录」只清除登录状态，不影响正在运行的连接；「断开本机」会停止服务并删除本机的设备令牌。' ];
+	if (status && !status.token_present) {
+		notes.push('本机当前还没有设备令牌，断开后可以换一个账号或工作空间重新设置。');
+	}
+	return card('账号与本机', [
+		h('div', { class: 'row' }, buttons),
+		...notes.map((text) => h('p', { class: 'muted', text })),
+	]);
+}
+
 /* 4. 运行时就绪：需要安装 EasyTier 运行时。 */
-function renderRuntimeSetup(download, { reset }) {
+function renderRuntimeSetup(status, download, { reset, loggedIn }) {
 	const running = download.state === 'queued' || download.state === 'running';
 	const failed = download.state === 'failed';
 	const percent = Math.max(0, Math.min(100, Number(download.percent || 0)));
@@ -366,11 +392,14 @@ function renderRuntimeSetup(download, { reset }) {
 			}),
 		]));
 	}
-	return card(
-		running ? '正在安装 EasyTier 运行时' : '安装 EasyTier 运行时',
-		children,
-		'本机准备工作',
-	);
+	return h('div', {}, [
+		card(
+			running ? '正在安装 EasyTier 运行时' : '安装 EasyTier 运行时',
+			children,
+			'本机准备工作',
+		),
+		accountCard(status, { reset, loggedIn }),
+	]);
 }
 
 function startDownload({ reset }) {
@@ -386,13 +415,13 @@ function startDownload({ reset }) {
 	});
 }
 
-function pollDownload(host, { reset }) {
+function pollDownload(host, status, { reset, loggedIn }) {
 	const tick = () => {
 		api.downloadStatus().then((download) => {
 			if (!host.isConnected) {
 				return;
 			}
-			host.replaceChildren(renderRuntimeSetup(download, { reset }));
+			host.replaceChildren(renderRuntimeSetup(status, download, { reset, loggedIn }));
 			if (download.state === 'queued' || download.state === 'running') {
 				after(1500, tick);
 				return;
@@ -445,7 +474,7 @@ function tunNotice(status) {
 }
 
 /* 5. 服务停止：运行时已安装且已配置，但服务未运行。 */
-function renderServiceStopped(status, { reset }) {
+function renderServiceStopped(status, { reset, loggedIn }) {
 	const startButton = button('启动连接', {
 		variant: 'primary',
 		onclick: () => {
@@ -459,14 +488,14 @@ function renderServiceStopped(status, { reset }) {
 			});
 		},
 	});
-	return card('启动连接', [
-		tunNotice(status),
-		h('p', { text: 'EasyTier 已安装，本机也已与账号关联。启动连接后，本机就会加入所选的私有网络。' }),
-		h('div', { class: 'row' }, [
-			startButton,
-			button('断开本机', { variant: 'danger', onclick: () => confirmDisconnect(reset) }),
-		]),
-	].filter(Boolean), '本机已准备就绪');
+	return h('div', {}, [
+		card('启动连接', [
+			tunNotice(status),
+			h('p', { text: 'EasyTier 已安装，本机也已与账号关联。启动连接后，本机就会加入所选的私有网络。' }),
+			h('div', { class: 'row' }, [ startButton ]),
+		].filter(Boolean), '本机已准备就绪'),
+		accountCard(status, { reset, loggedIn }),
+	]);
 }
 
 /* 6. 运行中：状态摘要 + 网络列表 + 账号操作。 */
@@ -510,17 +539,7 @@ function renderRunning(status, auth, summary, networks, { reset, loggedIn }) {
 		sections.push(renderNetworkCard(networks, joined, reset));
 	}
 
-	sections.push(card('账号与本机', [
-		h('div', { class: 'row' }, [
-			button('打开 Console', {
-				variant: 'primary',
-				onclick: () => window.open(consoleWebURL(status.console_url), '_blank', 'noopener'),
-			}),
-			loggedIn ? button('退出 Console 登录', { onclick: () => confirmLogout(reset) }) : null,
-			button('断开本机', { variant: 'danger', onclick: () => confirmDisconnect(reset) }),
-		].filter(Boolean)),
-		h('p', { class: 'muted', text: '「退出 Console 登录」只清除登录状态，不影响正在运行的连接；「断开本机」会停止服务并删除本机的设备令牌。' }),
-	]));
+	sections.push(accountCard(status, { reset, loggedIn }));
 	return h('div', {}, sections);
 }
 
