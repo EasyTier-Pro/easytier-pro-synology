@@ -30,8 +30,8 @@ start_daemon() {
 		return 0
 	fi
 	[ -x "$DAEMON" ] || return 1
-	# DSM 6 runs lifecycle scripts as the package user but creates the var
-	# directory as root; reclaim ownership so the daemon can write its state.
+	# DSM 6 creates the var directory as root during postinst; if this script
+	# runs as the package user (e.g. manual invocation), reclaim ownership.
 	if [ "$(id -u)" != 0 ] && [ -d "$SYNOPKG_PKGVAR" ]; then
 		chown -R easytier-pro:easytier-pro "$SYNOPKG_PKGVAR" 2>/dev/null || true
 	fi

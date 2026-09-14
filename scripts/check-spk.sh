@@ -71,7 +71,7 @@ for spk in "$@"; do
 	jq -e '."defaults"."run-as" == "package"' "$work/conf/privilege" >/dev/null \
 		|| fail "$spk: conf/privilege defaults must run as package (DSM rejects root defaults)"
 	# DSM 7 rejects ctrl-script for unsigned packages, but DSM 6 needs it to run
-	# postinst/postuninst/start/stop as root.
+	# postinst/postuninst/preuninst/preupgrade/start/stop as root.
 	case "$os_min_ver" in
 		7.*)
 			jq -e 'has("ctrl-script") | not' "$work/conf/privilege" >/dev/null \

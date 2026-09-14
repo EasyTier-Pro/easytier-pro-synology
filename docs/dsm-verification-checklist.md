@@ -126,8 +126,9 @@ DSM 6 与 DSM 7 需要**独立的包**（`scripts/build-spk.sh --dsm 6|7|all`）
    拒绝 `os_min_ver="6.x"`（error 261）。因此 DSM 6 包用 `os_min_ver="6.2-23739"`，
    DSM 7 包用 `os_min_ver="7.0-40000"`。
 2. **运行身份**：DSM 6 的 `conf/privilege` 需要 `username`/`groupname` 字段才能让
-   `ctrl-script` 覆盖生效（`spk/conf/privilege.dsm6`）。守护进程仍以套件用户运行，
-   但 `postinst`/`postuninst`/`start`/`stop` 以 root 运行（写 nginx 配置、chown var 目录）。
+   `ctrl-script` 覆盖生效（`spk/conf/privilege.dsm6`）。守护进程在 DSM 6 上以 **root** 运行
+   （`start`/`stop`/`preuninst`/`preupgrade`/`postinst`/`postuninst` 均经 ctrl-script 以 root 执行），
+   因此 TUN 开箱可用（`euid==0` 直接判定有能力），且停止 daemon 需要 root 权限。
 3. **nginx 注入**：DSM 6 没有 `web-config` worker，`spk/scripts/postinst` 直接把
    `spk/nginx/dsm.easytier-pro.conf` 拷到 `/usr/syno/share/nginx/conf.d/dsm.easytier-pro.conf`。
    **文件名必须是 `dsm.*.conf`**，DSM 6 的 nginx 只 include 这个模式。

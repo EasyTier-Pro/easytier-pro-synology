@@ -35,10 +35,9 @@ case "$(dsm_major_version)" in
 			exit 1
 		fi
 
-		# start-stop-status runs as the package user, but the var directory
-		# is created by DSM as root; give the package user a writable place
-		# for its pid file, logs and runtime state. Use the package's etc
-		# directory, which is owned by the package user.
+		# Create the var directory for the daemon's pid file, logs and runtime
+		# state. Use the package's etc directory, which is owned by the package
+		# user (DSM 6 does not export SYNOPKG_PKGVAR to lifecycle scripts).
 		mkdir -p /usr/syno/etc/packages/easytier-pro/var/run /usr/syno/etc/packages/easytier-pro/var/logs /usr/syno/etc/packages/easytier-pro/var/state /usr/syno/etc/packages/easytier-pro/var/runtime /usr/syno/etc/packages/easytier-pro/var/cache
 		chown -R easytier-pro:easytier-pro /usr/syno/etc/packages/easytier-pro/var
 		;;
