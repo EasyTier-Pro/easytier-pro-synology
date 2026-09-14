@@ -5,8 +5,13 @@ umask 077
 # does not, which is what DSM expects for precheckstartstop.
 
 DAEMON="$SYNOPKG_PKGDEST/bin/easytier-pro-dsm"
-PID_FILE="$SYNOPKG_PKGVAR/run/daemon.pid"
-LOG_FILE="$SYNOPKG_PKGVAR/logs/daemon.log"
+
+# DSM 6 does not export SYNOPKG_PKGVAR to lifecycle scripts; use the package's
+# etc directory, which is owned by the package user.
+PKGVAR="${SYNOPKG_PKGVAR:-/usr/syno/etc/packages/easytier-pro/var}"
+PID_FILE="$PKGVAR/run/daemon.pid"
+LOG_FILE="$PKGVAR/logs/daemon.log"
+export SYNOPKG_PKGVAR="$PKGVAR"
 
 daemon_pid() {
 	[ -r "$PID_FILE" ] || return 1
@@ -25,6 +30,11 @@ start_daemon() {
 		return 0
 	fi
 	[ -x "$DAEMON" ] || return 1
+	# DSM 6 runs lifecycle scripts as the package user but creates the var
+	# directory as root; reclaim ownership so the daemon can write its state.
+	if [ "$(id -u)" != 0 ] && [ -d "$SYNOPKG_PKGVAR" ]; then
+		chown -R easytier-pro:easytier-pro "$SYNOPKG_PKGVAR" 2>/dev/null || true
+	fi
 	mkdir -p "$SYNOPKG_PKGVAR/run" "$SYNOPKG_PKGVAR/logs" || return 1
 	rm -f "$PID_FILE"
 	setsid "$DAEMON" supervise >>"$LOG_FILE" 2>&1 </dev/null &

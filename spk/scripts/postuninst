@@ -9,7 +9,7 @@ case "$SYNOPKG_PKG_STATUS" in
 	UPGRADE) exit 0 ;;
 esac
 
-NGINX_TARGET="/usr/syno/share/nginx/conf.d/easytier-pro.conf"
+NGINX_TARGET="/usr/syno/share/nginx/conf.d/dsm.easytier-pro.conf"
 
 dsm_major_version() {
 	if [ -r /etc/VERSION ]; then
@@ -17,9 +17,13 @@ dsm_major_version() {
 	fi
 }
 
+# DSM 6 does not export SYNOPKG_PKGVAR to lifecycle scripts; use the package's
+# etc directory, which is owned by the package user.
+PKGVAR="${SYNOPKG_PKGVAR:-/usr/syno/etc/packages/easytier-pro/var}"
+
 for sub in state runtime logs run cache; do
-	if [ -e "$SYNOPKG_PKGVAR/$sub" ] && ! rm -rf "$SYNOPKG_PKGVAR/$sub"; then
-		echo "无法删除 $SYNOPKG_PKGVAR/$sub，请检查权限后重试。" >&2
+	if [ -e "$PKGVAR/$sub" ] && ! rm -rf "$PKGVAR/$sub"; then
+		echo "无法删除 $PKGVAR/$sub，请检查权限后重试。" >&2
 		exit 1
 	fi
 done
@@ -34,6 +38,9 @@ case "$(dsm_major_version)" in
 				nginx -s reload >/dev/null 2>&1 || true
 			fi
 		fi
+		# Remove the var directory itself on DSM 6, which lives outside the
+		# standard package tree.
+		rm -rf "$PKGVAR"
 		;;
 esac
 

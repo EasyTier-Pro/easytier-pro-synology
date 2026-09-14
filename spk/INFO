@@ -1,6 +1,6 @@
 package="easytier-pro"
 version="1.0.0-0001"
-os_min_ver="6.2-23739"
+os_min_ver="7.0-40000"
 arch="x86_64"
 maintainer="EasyTier Project"
 maintainer_url="https://github.com/EasyTier-Pro"

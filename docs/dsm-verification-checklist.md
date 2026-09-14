@@ -99,7 +99,7 @@ curl 登录得到的会话可以正常返回用户名）。真实会话只能在
 3. **升级会跑 `preuninst`/`postuninst`**（`SYNOPKG_PKG_STATUS=UPGRADE`），清理逻辑必须只在
    `UNINSTALL` 时执行，否则升级会丢密钥与机器标识。
 4. **应用页面路径**：DSM 把第三方应用窗口开到 `/3rdparty/<package>/index.html`，该路径默认没有
-   nginx 路由，需要套件通过 `web-config` worker 提供（本仓库的 `spk/nginx/easytier-pro.conf`）。
+   nginx 路由，需要套件通过 `web-config` worker 提供（本仓库的 `spk/nginx/dsm.easytier-pro.conf`）。
 5. **DSM 不对包内 CGI/静态文件做登录门禁**（无 Cookie 访问返回 200），鉴权必须由套件自己完成。
    会话本身由 DSM 判定，见上文「本机 API 鉴权：实测结论与实现」。
 6. **RPC 管理端口必须监听未指定地址**：core 会把管理套接字绑定到承载端口地址的网卡
@@ -129,7 +129,7 @@ curl 登录得到的会话可以正常返回用户名）。真实会话只能在
    `internal/runtime/tun.go` 的 `fileCapability` 会因 `euid==0` 直接判定有能力，**DSM 6 上
    TUN 设备开箱可用**，无需 `setcap`；同时本机 API 的 DSM 会话校验（`internal/dsmenv`）不受影响，
    仍走回环询问 DSM Web API 的同一条路径。
-2. **nginx 注入**：DSM 7 用 `conf/resource` 的 `web-config` worker 把 `spk/nginx/easytier-pro.conf`
+2. **nginx 注入**：DSM 7 用 `conf/resource` 的 `web-config` worker 把 `spk/nginx/dsm.easytier-pro.conf`
    链入运行配置；DSM 6 没有该 worker。因此 `spk/scripts/postinst` 在 DSM 主版本 `<7` 时检测
    `nginx -T` 输出，若没有本套件的路由，则把同一份 conf 拷到 `/usr/syno/share/nginx/conf.d/`
    并在 `nginx -t` 通过后 reload；`postuninst` 做对称清理（仅删本套件拷入的那个文件）。

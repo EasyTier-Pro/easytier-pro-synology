@@ -3,9 +3,9 @@
 # into the running configuration; DSM 6 has no such worker, so the package
 # installs the same snippet into the nginx include directory itself.
 
-NGINX_SNIPPET="$SYNOPKG_PKGDEST/nginx/easytier-pro.conf"
+NGINX_SNIPPET="$SYNOPKG_PKGDEST/nginx/dsm.easytier-pro.conf"
 NGINX_INCLUDE_DIR="/usr/syno/share/nginx/conf.d"
-NGINX_TARGET="$NGINX_INCLUDE_DIR/easytier-pro.conf"
+NGINX_TARGET="$NGINX_INCLUDE_DIR/dsm.easytier-pro.conf"
 
 dsm_major_version() {
 	if [ -r /etc/VERSION ]; then
@@ -34,6 +34,13 @@ case "$(dsm_major_version)" in
 			echo "无法注册 EasyTier Pro 的 nginx 路由，请检查 nginx 配置。" >&2
 			exit 1
 		fi
+
+		# start-stop-status runs as the package user, but the var directory
+		# is created by DSM as root; give the package user a writable place
+		# for its pid file, logs and runtime state. Use the package's etc
+		# directory, which is owned by the package user.
+		mkdir -p /usr/syno/etc/packages/easytier-pro/var/run /usr/syno/etc/packages/easytier-pro/var/logs /usr/syno/etc/packages/easytier-pro/var/state /usr/syno/etc/packages/easytier-pro/var/runtime /usr/syno/etc/packages/easytier-pro/var/cache
+		chown -R easytier-pro:easytier-pro /usr/syno/etc/packages/easytier-pro/var
 		;;
 esac
 

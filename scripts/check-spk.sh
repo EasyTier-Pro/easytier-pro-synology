@@ -17,29 +17,13 @@ usage() {
 [ "$#" -ge 1 ] || usage
 command -v jq >/dev/null 2>&1 || fail "jq is required"
 
-# version_ge compares "7.0-40000" style versions.
-version_ge() {
-	awk -v left="$1" -v right="$2" 'BEGIN {
-		split(left, l, "-"); split(right, r, "-")
-		split(l[1], lv, "."); split(r[1], rv, ".")
-		for (i = 1; i <= 3; i++) {
-			lp = lv[i] + 0; rp = rv[i] + 0
-			if (lp > rp) exit 0
-			if (lp < rp) exit 1
-		}
-		lb = l[2] + 0; rb = r[2] + 0
-		exit (lb >= rb) ? 0 : 1
-	}'
-}
-
 required_info_keys="package version os_min_ver arch maintainer maintainer_url distributor distributor_url support_url displayname description description_chs dsmuidir dsmappname precheckstartstop extractsize"
-required_members="INFO package.tgz scripts/start-stop-status conf/privilege conf/resource PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG"
-required_package_files="bin/easytier-pro-dsm ui/index.html ui/config nginx/easytier-pro.conf"
+required_package_files="bin/easytier-pro-dsm ui/index.html ui/config nginx/dsm.easytier-pro.conf"
 
 for spk in "$@"; do
 	[ -f "$spk" ] || fail "missing file: $spk"
 	members="$(tar tf "$spk")"
-	for member in $required_members; do
+	for member in INFO package.tgz scripts/start-stop-status conf/privilege PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG; do
 		printf '%s\n' "$members" | grep -qx "$member" || fail "$spk: missing member $member"
 	done
 
@@ -52,20 +36,38 @@ for spk in "$@"; do
 	done
 
 	os_min_ver="$(sed -n 's/^os_min_ver="\(.*\)"$/\1/p' "$work/INFO")"
-	version_ge "$os_min_ver" "6.2-23739" || fail "$spk: os_min_ver $os_min_ver is below 6.2-23739"
+	case "$os_min_ver" in
+		7.*) ;;
+		6.2-*) ;;
+		*) fail "$spk: os_min_ver $os_min_ver is neither a DSM 7 nor a DSM 6.2+ floor" ;;
+	esac
 
 	arch="$(sed -n 's/^arch="\(.*\)"$/\1/p' "$work/INFO")"
 	case "$arch" in
 		x86_64|armv8|armv7) ;;
 		*) fail "$spk: unsupported arch $arch" ;;
 	esac
+	# The file name carries the arch, and optionally a -dsm6 suffix after it.
 	case "$spk" in
-		*"-$arch-"*) ;;
+		*"-$arch-"*|*"-$arch-dsm6-"*) ;;
 		*) fail "$spk: file name does not match INFO arch $arch" ;;
+	esac
+	# os_min_ver major and the -dsm6 suffix must agree.
+	case "$os_min_ver" in
+		6.*)
+			case "$spk" in
+				*"-dsm6-"*) ;;
+				*) fail "$spk: DSM 6 package must carry the -dsm6 suffix" ;;
+			esac
+			;;
+		7.*)
+			case "$spk" in
+				*"-dsm6-"*) fail "$spk: DSM 7 package must not carry the -dsm6 suffix" ;;
+			esac
+			;;
 	esac
 
 	jq -e . "$work/conf/privilege" >/dev/null || fail "$spk: conf/privilege is not valid JSON"
-	jq -e . "$work/conf/resource" >/dev/null || fail "$spk: conf/resource is not valid JSON"
 	jq -e '."defaults"."run-as" == "package"' "$work/conf/privilege" >/dev/null \
 		|| fail "$spk: conf/privilege defaults must run as package (DSM rejects root defaults)"
 	jq -e 'has("ctrl-script") | not' "$work/conf/privilege" >/dev/null \
@@ -74,8 +76,18 @@ for spk in "$@"; do
 		|| fail "$spk: conf/privilege must not declare executable (DSM rejects it for unsigned packages)"
 	jq -e '[."tool"[]? | select(has("capabilities"))] | length == 0' "$work/conf/privilege" >/dev/null \
 		|| fail "$spk: conf/privilege must not request tool capabilities (DSM rejects it for unsigned packages)"
-	jq -e '."web-config"."nginx-static-config"' "$work/conf/resource" >/dev/null \
-		|| fail "$spk: conf/resource is missing the nginx-static-config worker"
+	# DSM 7 needs the web-config resource worker to inject the nginx snippet; DSM 6
+	# packages omit conf/resource entirely and inject via postinst instead.
+	case "$os_min_ver" in
+		7.*)
+			jq -e . "$work/conf/resource" >/dev/null || fail "$spk: DSM 7 package is missing conf/resource"
+			jq -e '."web-config"."nginx-static-config"' "$work/conf/resource" >/dev/null \
+				|| fail "$spk: conf/resource is missing the nginx-static-config worker"
+			;;
+		6.*)
+			[ ! -e "$work/conf/resource" ] || fail "$spk: DSM 6 package must not ship conf/resource"
+			;;
+	esac
 
 	[ -x "$work/scripts/start-stop-status" ] || fail "$spk: scripts/start-stop-status is not executable"
 	for script in preinst postinst preupgrade postupgrade preuninst postuninst; do
