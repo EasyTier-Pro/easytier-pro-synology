@@ -162,3 +162,75 @@ func TestAuthenticateDoesNotShareCacheAcrossTokens(t *testing.T) {
 		t.Fatalf("DSM was asked %d times, want 2 (one per token)", got)
 	}
 }
+
+// DSM binds browser sessions to their source IP. A loopback probe must retain
+// the address supplied by our nginx location, not a caller's forwarded chain.
+func TestAuthenticatePreservesClientIP(t *testing.T) {
+	for _, clientIP := range []string{"192.0.2.10", "2001:db8::10"} {
+		t.Run(clientIP, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("X-Forwarded-For") != clientIP {
+					_, _ = w.Write([]byte(`{"success":false,"error":{"code":150}}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"success":true}`))
+			}))
+			t.Cleanup(server.Close)
+			auth := New(nil)
+			auth.endpoint = server.URL
+			request := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+			request.Header.Set("Cookie", "id=session")
+			request.Header.Set("X-Real-IP", clientIP)
+			request.Header.Set("X-Forwarded-For", "198.51.100.1, 198.51.100.2")
+			if _, aerr := auth.Authenticate(request.Context(), request); aerr != nil {
+				t.Fatalf("Authenticate() lost the browser's source IP: %v", aerr)
+			}
+		})
+	}
+}
+
+func TestAuthenticateDoesNotShareCacheAcrossClientIPs(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		if r.Header.Get("X-Forwarded-For") != "192.0.2.10" {
+			_, _ = w.Write([]byte(`{"success":false,"error":{"code":150}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	t.Cleanup(server.Close)
+	auth := New(nil)
+	auth.endpoint = server.URL
+	request := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	request.Header.Set("Cookie", "id=session")
+	request.Header.Set("X-Syno-Token", "token")
+	request.Header.Set("X-Real-IP", "192.0.2.10")
+	for range 2 {
+		if _, aerr := auth.Authenticate(request.Context(), request); aerr != nil {
+			t.Fatalf("Authenticate() = %v, want success", aerr)
+		}
+	}
+	request.Header.Set("X-Real-IP", "192.0.2.11")
+	if _, aerr := auth.Authenticate(request.Context(), request); aerr == nil || aerr.Code != "dsm_auth_required" {
+		t.Fatalf("Authenticate() = %v, want dsm_auth_required for another IP", aerr)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("DSM was asked %d times, want 2 (one per source IP)", got)
+	}
+}
+
+func TestAuthenticateRejectsMalformedClientIP(t *testing.T) {
+	for _, clientIP := range []string{"not-an-ip", "192.0.2.10, 192.0.2.11", "192.0.2.10:5000"} {
+		t.Run(clientIP, func(t *testing.T) {
+			auth, request, calls := newTestAuthenticator(t, `{"success":true}`, http.StatusOK)
+			request.Header.Set("X-Real-IP", clientIP)
+			if _, aerr := auth.Authenticate(request.Context(), request); aerr == nil || aerr.Code != "dsm_auth_required" {
+				t.Fatalf("Authenticate() = %v, want dsm_auth_required", aerr)
+			}
+			if got := atomic.LoadInt32(calls); got != 0 {
+				t.Fatalf("a malformed client IP reached DSM %d times", got)
+			}
+		})
+	}
+}

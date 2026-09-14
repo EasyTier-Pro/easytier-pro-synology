@@ -57,10 +57,10 @@
 - DSM 7 强制第三方套件降权运行：`conf/privilege` 只允许 `defaults.run-as = "package"`，
   且不接受 `ctrl-script`、`executable` 与 `tool.capabilities`，因此守护进程以套件专用用户
   `easytier-pro` 运行、不带任何 capability；本机 API 只监听回环，并且每个请求都要先通过
-  DSM 会话校验——守护进程携带调用方 Cookie 通过回环询问 DSM 自身的 Web API，由 DSM 判定
+  DSM 会话校验——守护进程携带调用方 Cookie、CSRF 令牌和 nginx 提供的来源 IP，通过回环询问 DSM 自身的 Web API，由 DSM 判定
   该会话是否为管理员（详见 `docs/dsm-verification-checklist.md`）。
-- DSM 6 没有降权机制，守护进程以 root 运行，因此 TUN 设备开箱可用（无需 `setcap`），
-  也不会出现「无 TUN 模式」。nginx 路由在 DSM 6 上由 `postinst`/`postuninst` 直接拷入/清理
+- DSM 6.2.4 全新安装实测同样以套件用户运行，默认使用无 TUN 模式；不能假定生命周期脚本的
+  root 权限会传递给守护进程。nginx 路由在 DSM 6 上由 `postinst`/`postuninst` 直接拷入/清理
   `/usr/syno/share/nginx/conf.d/`，而非 DSM 7 的 `web-config` worker。
 - TUN 设备需要 `CAP_NET_ADMIN`，而运行时二进制是首次连接时下载到套件数据目录的，无法由 DSM
   提前授予。没有该能力时守护进程会自动把本机节点切换为**无 TUN 模式**（在 EasyTier Console 上
@@ -72,7 +72,7 @@
   在 Console 上为本机节点关闭该绑定（`bind_device = false`）。因此**在无 TUN 模式下本套件不需要
   任何 capability，也不需要任何 root 操作**。若希望 NAS 本身拥有虚拟网卡（即让 NAS 上的程序能
   主动访问其它节点），可由管理员可选地授予 `CAP_NET_ADMIN`（`setcap` 命令见概览页）。
-- 需要本机拥有虚拟 IP 时，由管理员一次性授予该文件能力，然后重新启动套件：
+- 需要本机拥有虚拟网卡时，由管理员一次性授予该文件能力，然后重新启动套件：
   `sudo setcap cap_net_admin,cap_net_raw+ep /volume*/@appdata/easytier-pro/runtime/easytier-core`
   （每次重新下载运行时后需要再执行一次；概览页的「复制命令」按钮直接给出当前路径的完整命令）。
   守护进程每次启动都会重新检查该能力：检测到后会自动取消 Console 上的 `no_tun` 设置，恢复完整模式。

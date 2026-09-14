@@ -1,0 +1,12 @@
+{
+  "result": {
+    "6": {
+      "apiStatus": 200,
+      "sessionValid": true
+    },
+    "7": {
+      "apiStatus": 200,
+      "sessionValid": true
+    }
+  }
+}

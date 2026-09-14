@@ -1,0 +1,10 @@
+59a1217fb091a771071c4764d210f3c8ea832a7e1680e7d8de33cd431296a38a  /tmp/from-dsm6-final.bin
+8388608 /tmp/from-dsm6-final.bin
+PING 10.166.77.3 (10.166.77.3): 56 data bytes
+64 bytes from 10.166.77.3: seq=0 ttl=32 time=0.652 ms
+64 bytes from 10.166.77.3: seq=1 ttl=32 time=0.687 ms
+64 bytes from 10.166.77.3: seq=2 ttl=32 time=0.526 ms
+
+--- 10.166.77.3 ping statistics ---
+3 packets transmitted, 3 packets received, 0% packet loss
+round-trip min/avg/max = 0.526/0.621/0.687 ms

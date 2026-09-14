@@ -166,3 +166,7 @@ User-Agent 某一项断言为已确认根因。
 - 独立环境 Compose 文件位于 `/tmp/dsm-e2e-20260915/compose.json`，其中包含测试
   环境凭据，未提交。清理时只对这个 Compose 项目执行 `down -v`，并单独删除
   `dsm-e2e-20260915-peer`，不要清理原有 `easytier-e2e-local` 环境。
+
+## 后续修复
+
+DSM6 鉴权故障已修复，重新全新安装后的完整结果见 [修复 E2E 报告](../e2e-20260915-fix/README.md)。本页保留首次测试时的原始结果。

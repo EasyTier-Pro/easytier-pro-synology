@@ -2,8 +2,9 @@
 // administrator session.
 //
 // The check is delegated to DSM: the daemon asks the appliance's own Web API,
-// over loopback and carrying the caller's cookies, whether the session may call
-// an administrative API. DSM owns the session store and the privilege rules, so
+// over loopback and carrying the caller's cookies and source IP, whether the
+// session may call an administrative API. DSM owns the session store and the
+// privilege rules, so
 // re-implementing either here would only be able to approximate them.
 //
 // The earlier implementation ran the authenticate.cgi module directly with a
@@ -168,13 +169,25 @@ func (a *Authenticator) Authenticate(ctx context.Context, request *http.Request)
 	if cookie == "" {
 		return "", apperr.New(apperr.CodeDSMAuthRequired)
 	}
-	// The token is part of the credential: the same cookie with a different
-	// token is a different question.
-	key := cookie + "\x00" + request.Header.Get(synoTokenHeader)
+	// Our nginx locations overwrite X-Real-IP with the browser's address.
+	// DSM binds sessions to that address and invalidates them if our loopback
+	// probe appears to come from a different IP. Never use a forwarded chain
+	// supplied by the browser itself.
+	clientIP := strings.TrimSpace(request.Header.Get("X-Real-IP"))
+	if clientIP != "" {
+		ip := net.ParseIP(clientIP)
+		if ip == nil {
+			return "", apperr.New(apperr.CodeDSMAuthRequired)
+		}
+		clientIP = ip.String()
+	}
+	// The token and source IP are part of the credential: the same cookie
+	// with a different token or source IP is a different question.
+	key := cookie + "\x00" + request.Header.Get(synoTokenHeader) + "\x00" + clientIP
 	if result, cached := a.cached(key); cached {
 		return a.result(result)
 	}
-	result := a.probe(ctx, request, key)
+	result := a.probe(ctx, request, clientIP)
 	a.store(key, result)
 	return a.result(result)
 }
@@ -191,10 +204,11 @@ func (a *Authenticator) result(result outcome) (string, *apperr.Error) {
 }
 
 // probe asks DSM whether the session may call an administrative API.
-func (a *Authenticator) probe(ctx context.Context, request *http.Request, key string) outcome {
-	cookie, token, _ := strings.Cut(key, "\x00")
+func (a *Authenticator) probe(ctx context.Context, request *http.Request, clientIP string) outcome {
+	cookie := strings.TrimSpace(request.Header.Get("Cookie"))
+	token := request.Header.Get(synoTokenHeader)
 	for _, endpoint := range a.endpoints(request) {
-		result, err := a.ask(ctx, endpoint, cookie, token)
+		result, err := a.ask(ctx, endpoint, cookie, token, clientIP)
 		if err != nil {
 			// Nothing that speaks the DSM Web API is listening here.
 			continue
@@ -254,7 +268,7 @@ type probeResult struct {
 
 // call performs one probe. A non-nil error means the endpoint could not be
 // reached or did not answer with a DSM envelope, so another one may be tried.
-func (a *Authenticator) ask(ctx context.Context, endpoint, cookie, token string) (probeResult, error) {
+func (a *Authenticator) ask(ctx context.Context, endpoint, cookie, token, clientIP string) (probeResult, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+adminAPI, nil)
 	if err != nil {
 		return probeResult{}, err
@@ -263,6 +277,11 @@ func (a *Authenticator) ask(ctx context.Context, endpoint, cookie, token string)
 	request.Header.Set("Accept", "application/json")
 	if token != "" {
 		request.Header.Set(synoTokenHeader, token)
+	}
+	// DSM's nginx trusts X-Forwarded-For from loopback, preserving the source
+	// address when it hands this request to its own session validator.
+	if clientIP != "" {
+		request.Header.Set("X-Forwarded-For", clientIP)
 	}
 	response, err := a.client.Do(request)
 	if err != nil {
