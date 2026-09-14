@@ -59,8 +59,8 @@
   `easytier-pro` 运行、不带任何 capability；本机 API 只监听回环，并且每个请求都要先通过
   DSM 会话校验——守护进程携带调用方 Cookie、CSRF 令牌和 nginx 提供的来源 IP，通过回环询问 DSM 自身的 Web API，由 DSM 判定
   该会话是否为管理员（详见 `docs/dsm-verification-checklist.md`）。
-- DSM 6.2.4 全新安装实测同样以套件用户运行，默认使用无 TUN 模式；不能假定生命周期脚本的
-  root 权限会传递给守护进程。nginx 路由在 DSM 6 上由 `postinst`/`postuninst` 直接拷入/清理
+- DSM 6 通过 `conf/privilege` 让正式启动、停止和状态检查以 root 执行，守护进程及 core
+  因此可直接使用 TUN；预检查不启动进程。nginx 路由在 DSM 6 上由 `postinst`/`postuninst` 直接拷入/清理
   `/usr/syno/share/nginx/conf.d/`，而非 DSM 7 的 `web-config` worker。
 - TUN 设备需要 `CAP_NET_ADMIN`，而运行时二进制是首次连接时下载到套件数据目录的，无法由 DSM
   提前授予。没有该能力时守护进程会自动把本机节点切换为**无 TUN 模式**（在 EasyTier Console 上

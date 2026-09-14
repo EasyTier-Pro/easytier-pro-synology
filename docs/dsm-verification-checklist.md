@@ -125,9 +125,11 @@ DSM 6 与 DSM 7 需要**独立的包**（`scripts/build-spk.sh --dsm 6|7|all`）
 1. **os_min_ver 主版本必须匹配**：DSM 7 的安装器要求 `os_min_ver` 的主版本号等于当前 OS，
    拒绝 `os_min_ver="6.x"`（error 261）。因此 DSM 6 包用 `os_min_ver="6.2-23739"`，
    DSM 7 包用 `os_min_ver="7.0-40000"`。
-2. **运行身份**：2026-09-15 在 DSM 6.2.4 全新安装实测，守护进程和 core 均以套件用户
-   运行，默认使用无 TUN 模式。`conf/privilege` 中的生命周期脚本权限不能作为 daemon
-   以 root 运行的证据；此前关于 TUN 开箱可用的结论不适用于当前产物。
+2. **运行身份**：DSM6 的正式 `start`、`stop`、`status` 使用 root 权限。
+   `prestart`/`prestop` 只预检查，不能提前启动或停止进程。此前把预检查当正式启动，
+   导致 daemon 在 root `start` 之前以套件用户启动，产生了错误的默认无 TUN 结论。
+   修复后的 `1.0.0-0003` 全新安装以 root 运行；`1.0.0-0004` 补齐启动时加载
+   `tun.ko` 和创建设备节点，避免整机重启后缺少驱动。
 3. **nginx 注入**：DSM 6 没有 `web-config` worker，`spk/scripts/postinst` 直接把
    `spk/nginx/dsm.easytier-pro.conf` 拷到 `/usr/syno/share/nginx/conf.d/dsm.easytier-pro.conf`。
    **文件名必须是 `dsm.*.conf`**，DSM 6 的 nginx 只 include 这个模式。
@@ -135,13 +137,13 @@ DSM 6 与 DSM 7 需要**独立的包**（`scripts/build-spk.sh --dsm 6|7|all`）
    `/usr/syno/etc/packages/easytier-pro/var`（该目录由 DSM 创建并 chown 给套件用户）。
 5. **TUN**：DSM 6 内核有 `tun.ko` 模块，`insmod` 后 `/dev/net/tun` 可用。
 
-最新全新安装与真实传输结果见 [DSM6 修复 E2E 报告](e2e-20260915-fix/README.md)。
-默认无 TUN 模式下完成授权、运行时安装、组网、文件传输和重启恢复；本轮未验证授予能力后的 TUN 模式。
+完整 TUN、新用户流程与整机重启结果见 [TUN E2E 报告](e2e-20260915-tun/README.md)。
+此前的无 TUN 测试见 [鉴权修复 E2E 报告](e2e-20260915-fix/README.md)，保留作历史记录。
 
 
 ### 虚拟网卡（B12/B13）：已实现的行为
 
-DSM 不允许第三方套件以 root 运行，也无从获得 capability，因此守护进程在每次启动时检查运行时
+DSM7 不允许第三方套件以 root 运行，默认也没有 capability，因此守护进程在每次启动时检查运行时
 二进制的文件能力（`security.capability` 中的 `CAP_NET_ADMIN`），并把结果同步到 Console：
 
 0. **两个能力对应两个 Console 设置，都可以不要**。core 的两个默认值与能力需求的对应关系：

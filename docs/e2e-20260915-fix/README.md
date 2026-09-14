@@ -107,3 +107,7 @@ DSM6 会话绑定来源 IP。此前 daemon 携带 Cookie 和 CSRF 令牌，通�
 
 自动化验证：新回归用例先在旧代码失败，修复后 `go test -race ./internal/dsmenv`、
 `go test ./...`、`go vet ./...` 通过；前端构建及两个 SPK 结构检查通过。
+
+## 后续 TUN 验证
+
+默认无 TUN 是当时启动脚本缺陷造成的 DSM6 实测结果，不代表 DSM6 平台只能无 TUN。后续修复与完整 TUN 结果见 [TUN E2E 报告](../e2e-20260915-tun/README.md)。

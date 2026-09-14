@@ -1,0 +1,21 @@
+71e3442d-a7e8-4fba-9cb8-9798d227c55c
+version="1.0.0-0004"
+5: tun0: <POINTOPOINT,UP,LOWER_UP> mtu 1360 qdisc pfifo_fast state UNKNOWN group default qlen 500
+    inet 10.166.77.1/24 brd 10.166.77.255 scope global tun0
+       valid_lft forever preferred_lft forever
+/volume1/@appdata/easytier-pro/runtime/easytier-core = cap_net_admin,cap_net_raw+ep
+Uid:	187812	187812	187812	187812
+CapEff:	0000000000003000
+30552815cc326ee36653af83a65e42e83b777ac7dccc7219f5b26e61c614e580  /tmp/tun-from-peer.bin
+8388608 /tmp/tun-from-peer.bin
+PING 10.166.77.2 (10.166.77.2) 56(84) bytes of data.
+64 bytes from 10.166.77.2: icmp_seq=1 ttl=64 time=7.14 ms
+64 bytes from 10.166.77.2: icmp_seq=2 ttl=64 time=9.39 ms
+64 bytes from 10.166.77.2: icmp_seq=3 ttl=64 time=15.6 ms
+64 bytes from 10.166.77.2: icmp_seq=4 ttl=64 time=44.0 ms
+64 bytes from 10.166.77.2: icmp_seq=5 ttl=64 time=1006 ms
+
+--- 10.166.77.2 ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 99ms
+rtt min/avg/max/mdev = 7.141/216.357/1005.632/394.858 ms
+

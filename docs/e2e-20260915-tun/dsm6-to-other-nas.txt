@@ -1,0 +1,13 @@
+30552815cc326ee36653af83a65e42e83b777ac7dccc7219f5b26e61c614e580  /tmp/tun-from-nas.bin
+8388608 /tmp/tun-from-nas.bin
+PING 10.166.77.1 (10.166.77.1) 56(84) bytes of data.
+64 bytes from 10.166.77.1: icmp_seq=1 ttl=64 time=38.6 ms
+64 bytes from 10.166.77.1: icmp_seq=2 ttl=64 time=1.11 ms
+64 bytes from 10.166.77.1: icmp_seq=3 ttl=64 time=1.00 ms
+64 bytes from 10.166.77.1: icmp_seq=4 ttl=64 time=1.34 ms
+64 bytes from 10.166.77.1: icmp_seq=5 ttl=64 time=1.01 ms
+
+--- 10.166.77.1 ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 4004ms
+rtt min/avg/max/mdev = 1.002/8.629/38.678/15.024 ms
+

@@ -1,0 +1,19 @@
+04efd6c0-0535-4c38-bf74-053d3d6950cd
+5: tun0: <POINTOPOINT,UP,LOWER_UP> mtu 1360 qdisc pfifo_fast state UNKNOWN group default qlen 500
+    inet 10.166.77.1/24 brd 10.166.77.255 scope global tun0
+       valid_lft forever preferred_lft forever
+Uid:	187812	187812	187812	187812
+CapEff:	0000000000003000
+30552815cc326ee36653af83a65e42e83b777ac7dccc7219f5b26e61c614e580  /tmp/tun-from-peer.bin
+8388608 /tmp/tun-from-peer.bin
+PING 10.166.77.3 (10.166.77.3) 56(84) bytes of data.
+64 bytes from 10.166.77.3: icmp_seq=1 ttl=64 time=4.84 ms
+64 bytes from 10.166.77.3: icmp_seq=2 ttl=64 time=0.746 ms
+64 bytes from 10.166.77.3: icmp_seq=3 ttl=64 time=0.632 ms
+64 bytes from 10.166.77.3: icmp_seq=4 ttl=64 time=0.832 ms
+64 bytes from 10.166.77.3: icmp_seq=5 ttl=64 time=0.833 ms
+
+--- 10.166.77.3 ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 6ms
+rtt min/avg/max/mdev = 0.632/1.576/4.837/1.632 ms
+

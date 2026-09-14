@@ -1,0 +1,7 @@
+| ipv4           | hostname                  | cost  | lat(ms) | loss | rx        | tx        | tunnel   | NAT            | version         |
+|----------------|---------------------------|-------|---------|------|-----------|-----------|----------|----------------|-----------------|
+| 10.166.77.2/24 | dsm-e2e-peer              | Local | -       | -    | -         | -         | -        | PortRestricted | 2.6.4-8428a89d  |
+|                | PublicServer_a45223e5cc1b | p2p   | 0.47    | 0.0% | 276.14 kB | 292.41 kB | http-udp | PortRestricted | 2.6.4-1216728b~ |
+| 10.166.77.1/24 | dsm-etp                   | p2p   | 47.98   | 0.0% | 180.12 kB | 9.14 MB   | tcp      | PortRestricted | 2.6.4-8428a89d  |
+| 10.166.77.3/24 | dsm62                     | p2p   | 88.88   | 0.0% | 226.16 kB | 9.14 MB   | tcp      | PortRestricted | 2.6.4-8428a89d  |
+| 198.18.33.1/24 | zbs-dev                   | p2p   | 0.36    | 0.0% | 159.25 kB | 181.47 kB | udp      | PortRestricted | 2.6.4-1216728b~ |

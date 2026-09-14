@@ -30,10 +30,16 @@ start_daemon() {
 		return 0
 	fi
 	[ -x "$DAEMON" ] || return 1
-	# DSM 6 creates the var directory as root during postinst; if this script
-	# runs as the package user (e.g. manual invocation), reclaim ownership.
-	if [ "$(id -u)" != 0 ] && [ -d "$SYNOPKG_PKGVAR" ]; then
-		chown -R easytier-pro:easytier-pro "$SYNOPKG_PKGVAR" 2>/dev/null || true
+	# DSM 6 starts us as root, but does not load its TUN driver at boot.
+	# A device node alone cannot create an interface without that driver.
+	if [ "$(id -u)" = 0 ]; then
+		if [ ! -d /sys/class/misc/tun ]; then
+			insmod /lib/modules/tun.ko || return 1
+		fi
+		if [ ! -c /dev/net/tun ]; then
+			mkdir -p /dev/net || return 1
+			mknod /dev/net/tun c 10 200 || return 1
+		fi
 	fi
 	mkdir -p "$SYNOPKG_PKGVAR/run" "$SYNOPKG_PKGVAR/logs" || return 1
 	rm -f "$PID_FILE"
@@ -68,14 +74,23 @@ stop_daemon() {
 }
 
 case "$1" in
-	start|prestart)
+	prestart)
+		# DSM runs prechecks separately, potentially as the package user.
+		# Only the start action may launch the daemon with its configured UID.
+		[ -x "$DAEMON" ]
+		exit $?
+		;;
+	prestop)
+		exit 0
+		;;
+	start)
 		start_daemon || {
 			echo "EasyTier Pro 启动失败。" >&2
 			exit 1
 		}
 		exit 0
 		;;
-	stop|prestop)
+	stop)
 		stop_daemon
 		exit 0
 		;;
