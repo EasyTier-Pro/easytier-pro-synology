@@ -52,7 +52,7 @@ for spk in "$@"; do
 	done
 
 	os_min_ver="$(sed -n 's/^os_min_ver="\(.*\)"$/\1/p' "$work/INFO")"
-	version_ge "$os_min_ver" "7.0-40000" || fail "$spk: os_min_ver $os_min_ver is below 7.0-40000"
+	version_ge "$os_min_ver" "6.2-23739" || fail "$spk: os_min_ver $os_min_ver is below 6.2-23739"
 
 	arch="$(sed -n 's/^arch="\(.*\)"$/\1/p' "$work/INFO")"
 	case "$arch" in

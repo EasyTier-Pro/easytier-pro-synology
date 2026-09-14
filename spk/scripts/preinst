@@ -11,6 +11,9 @@ target_volume="${SYNOPKG_PKGDEST_VOL:-}"
 if [ -z "$target_volume" ] && [ -n "$SYNOPKG_PKGDEST" ]; then
 	target_volume="$(printf '%s' "$SYNOPKG_PKGDEST" | awk -F/ 'NF > 1 { print "/" $2 }')"
 fi
+# Neither variable is guaranteed to be exported on DSM 6; measure the root
+# filesystem rather than failing the check with an empty path.
+target_volume="${target_volume:-/}"
 
 available_kb="$(df -Pk "$target_volume" 2>/dev/null | awk 'NR == 2 { print $4 }')"
 case "$available_kb" in

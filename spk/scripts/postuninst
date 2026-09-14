@@ -9,11 +9,32 @@ case "$SYNOPKG_PKG_STATUS" in
 	UPGRADE) exit 0 ;;
 esac
 
+NGINX_TARGET="/usr/syno/share/nginx/conf.d/easytier-pro.conf"
+
+dsm_major_version() {
+	if [ -r /etc/VERSION ]; then
+		awk -F'"' '/^majorversion=/ { print $2; exit }' /etc/VERSION
+	fi
+}
+
 for sub in state runtime logs run cache; do
 	if [ -e "$SYNOPKG_PKGVAR/$sub" ] && ! rm -rf "$SYNOPKG_PKGVAR/$sub"; then
 		echo "无法删除 $SYNOPKG_PKGVAR/$sub，请检查权限后重试。" >&2
 		exit 1
 	fi
 done
+
+# DSM 7 removes the web-config worker link itself; DSM 6 keeps the copy the
+# package installed, which must not survive the package.
+case "$(dsm_major_version)" in
+	6*)
+		if [ -f "$NGINX_TARGET" ]; then
+			rm -f "$NGINX_TARGET"
+			if nginx -t >/dev/null 2>&1; then
+				nginx -s reload >/dev/null 2>&1 || true
+			fi
+		fi
+		;;
+esac
 
 exit 0

@@ -16,7 +16,7 @@
 - 连接切换使用持久事务：掉电或并发操作不会留下令牌与设置不一致的状态。
 - 在界面里查看本机节点、Peer 摘要、TUN 设备和脱敏日志，并按 Console 网络列表加入/退出网络。
 - 可一键打开 Console 网页控制台。
-- 支持 `x86_64`、`armv8`、`armv7` 三种 DSM 架构。
+- 支持 `x86_64`、`armv8`、`armv7` 三种 DSM 架构，支持 DSM 6.2 与 DSM 7.x（`os_min_ver="6.2-23739"`）。
 
 ## 安装
 
@@ -59,6 +59,9 @@
   `easytier-pro` 运行、不带任何 capability；本机 API 只监听回环，并且每个请求都要先通过
   DSM 会话校验——守护进程携带调用方 Cookie 通过回环询问 DSM 自身的 Web API，由 DSM 判定
   该会话是否为管理员（详见 `docs/dsm-verification-checklist.md`）。
+- DSM 6 没有降权机制，守护进程以 root 运行，因此 TUN 设备开箱可用（无需 `setcap`），
+  也不会出现「无 TUN 模式」。nginx 路由在 DSM 6 上由 `postinst`/`postuninst` 直接拷入/清理
+  `/usr/syno/share/nginx/conf.d/`，而非 DSM 7 的 `web-config` worker。
 - TUN 设备需要 `CAP_NET_ADMIN`，而运行时二进制是首次连接时下载到套件数据目录的，无法由 DSM
   提前授予。没有该能力时守护进程会自动把本机节点切换为**无 TUN 模式**（在 EasyTier Console 上
   设置该节点的 `no_tun`，使下发的实例配置与本机权限一致）。无 TUN 模式并不等于退出网络：

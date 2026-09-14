@@ -1,4 +1,41 @@
 #!/bin/sh
-# Nothing to do after installation: the daemon creates its own state tree.
+# DSM 7 uses the web-config resource worker to link the bundled nginx snippet
+# into the running configuration; DSM 6 has no such worker, so the package
+# installs the same snippet into the nginx include directory itself.
+
+NGINX_SNIPPET="$SYNOPKG_PKGDEST/nginx/easytier-pro.conf"
+NGINX_INCLUDE_DIR="/usr/syno/share/nginx/conf.d"
+NGINX_TARGET="$NGINX_INCLUDE_DIR/easytier-pro.conf"
+
+dsm_major_version() {
+	if [ -r /etc/VERSION ]; then
+		awk -F'"' '/^majorversion=/ { print $2; exit }' /etc/VERSION
+	fi
+}
+
+nginx_has_our_route() {
+	nginx -T 2>/dev/null | grep -q '3rdparty/easytier-pro'
+}
+
+install_nginx_snippet() {
+	[ -f "$NGINX_SNIPPET" ] || return 0
+	mkdir -p "$NGINX_INCLUDE_DIR" || return 1
+	cp "$NGINX_SNIPPET" "$NGINX_TARGET" || return 1
+	if nginx -t >/dev/null 2>&1; then
+		nginx -s reload >/dev/null 2>&1 || true
+		return 0
+	fi
+	rm -f "$NGINX_TARGET"
+	return 1
+}
+
+case "$(dsm_major_version)" in
+	6*)
+		if ! nginx_has_our_route && ! install_nginx_snippet; then
+			echo "无法注册 EasyTier Pro 的 nginx 路由，请检查 nginx 配置。" >&2
+			exit 1
+		fi
+		;;
+esac
 
 exit 0
