@@ -1,0 +1,7 @@
+3f4b44dc48994ddb4d367b1ad25379b2e61887513a74572099d2cbb1e13ff6d7  /tmp/dsm-e2e-payload-20260915/payload.bin
+| ipv4           | hostname                  | cost  | lat(ms) | loss | rx        | tx      | tunnel   | NAT            | version         |
+|----------------|---------------------------|-------|---------|------|-----------|---------|----------|----------------|-----------------|
+| 10.166.77.1/24 | dsm-etp                   | Local | -       | -    | -         | -       | -        | PortRestricted | 2.6.4-8428a89d  |
+|                | PublicServer_a45223e5cc1b | p2p   | 1.05    | 0.0% | 5.16 kB   | 5.84 kB | http-udp | PortRestricted | 2.6.4-1216728b~ |
+| 10.166.77.2/24 | dsm-e2e-peer              | p2p   | 0.33    | 0.0% | 340.24 kB | 9.14 MB | tcp      | PortRestricted | 2.6.4-8428a89d  |
+| 198.18.33.1/24 | zbs-dev                   | p2p   | 0.81    | 0.0% | 703 B     | 699 B   | tcp      | PortRestricted | 2.6.4-1216728b~ |

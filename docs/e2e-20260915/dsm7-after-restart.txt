@@ -1,0 +1,15 @@
+Connecting to 10.166.77.1:18977 (10.166.77.1:18977)
+saving to '/tmp/from-dsm7-after-restart.bin'
+from-dsm7-after-rest   3% |*                               |  301k  0:00:26 ETA
+from-dsm7-after-rest  85% |***************************     | 7015k  0:00:00 ETA
+from-dsm7-after-rest 100% |********************************| 8192k  0:00:00 ETA
+'/tmp/from-dsm7-after-restart.bin' saved
+3f4b44dc48994ddb4d367b1ad25379b2e61887513a74572099d2cbb1e13ff6d7  /tmp/from-dsm7-after-restart.bin
+PING 10.166.77.1 (10.166.77.1): 56 data bytes
+64 bytes from 10.166.77.1: seq=0 ttl=32 time=0.720 ms
+64 bytes from 10.166.77.1: seq=1 ttl=32 time=0.488 ms
+64 bytes from 10.166.77.1: seq=2 ttl=32 time=0.759 ms
+
+--- 10.166.77.1 ping statistics ---
+3 packets transmitted, 3 packets received, 0% packet loss
+round-trip min/avg/max = 0.488/0.655/0.759 ms

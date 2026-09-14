@@ -1,0 +1,17 @@
+{
+  "before": {
+    "success": true
+  },
+  "appStatus": 401,
+  "app": {
+    "error": "dsm_auth_required",
+    "message": "请先登录 DSM。",
+    "ok": false
+  },
+  "after": {
+    "success": false,
+    "error": {
+      "code": 119
+    }
+  }
+}
