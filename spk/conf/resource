@@ -4,13 +4,13 @@
 			"enable": [
 				{
 					"type": "dsm",
-					"relpath": "nginx/easytier-pro.conf"
+					"relpath": "nginx/dsm.easytier-pro.conf"
 				}
 			],
 			"disable": [
 				{
 					"type": "dsm",
-					"relpath": "nginx/easytier-pro.conf"
+					"relpath": "nginx/dsm.easytier-pro.conf"
 				}
 			]
 		}

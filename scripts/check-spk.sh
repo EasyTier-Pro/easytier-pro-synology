@@ -70,8 +70,18 @@ for spk in "$@"; do
 	jq -e . "$work/conf/privilege" >/dev/null || fail "$spk: conf/privilege is not valid JSON"
 	jq -e '."defaults"."run-as" == "package"' "$work/conf/privilege" >/dev/null \
 		|| fail "$spk: conf/privilege defaults must run as package (DSM rejects root defaults)"
-	jq -e 'has("ctrl-script") | not' "$work/conf/privilege" >/dev/null \
-		|| fail "$spk: conf/privilege must not declare ctrl-script (DSM rejects it for unsigned packages)"
+	# DSM 7 rejects ctrl-script for unsigned packages, but DSM 6 needs it to run
+	# postinst/postuninst/start/stop as root.
+	case "$os_min_ver" in
+		7.*)
+			jq -e 'has("ctrl-script") | not' "$work/conf/privilege" >/dev/null \
+				|| fail "$spk: conf/privilege must not declare ctrl-script (DSM rejects it for unsigned packages)"
+			;;
+		6.*)
+			jq -e '."ctrl-script"' "$work/conf/privilege" >/dev/null \
+				|| fail "$spk: DSM 6 package must declare ctrl-script for root lifecycle scripts"
+			;;
+	esac
 	jq -e 'has("executable") | not' "$work/conf/privilege" >/dev/null \
 		|| fail "$spk: conf/privilege must not declare executable (DSM rejects it for unsigned packages)"
 	jq -e '[."tool"[]? | select(has("capabilities"))] | length == 0' "$work/conf/privilege" >/dev/null \

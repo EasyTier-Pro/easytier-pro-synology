@@ -118,44 +118,24 @@ curl 登录得到的会话可以正常返回用户名）。真实会话只能在
    `enable`/`disable` 同时声明同一端口会导致 `Runtime port ... conflict for nginx` 并使套件启动失败
    （272）。本项目只注入 location，不声明端口。
 
-### 平台约束（DSM 6 设计与待实机验证项）
+### 平台约束（DSM 6 已实机验证）
 
-套件从 `os_min_ver="6.2-23739"` 起同时支持 DSM 6.2 与 DSM 7.x（同一个 `.spk`）。DSM 6 与 DSM 7 的
-关键差异及本仓库的处理方式如下，**标 [待验证] 的条目需要在真实 DSM 6 设备/虚拟机上复核**（见文末
-「DSM 6 实机验证」）：
+DSM 6 与 DSM 7 需要**独立的包**（`scripts/build-spk.sh --dsm 6|7|all`）：
 
-1. **运行身份**：DSM 6 没有 `conf/privilege` 机制，套件脚本与守护进程**以 root 运行**
-   （DSM 7 强制以套件用户运行）。由此带来两个直接好处：守护进程以 root 身份运行时
-   `internal/runtime/tun.go` 的 `fileCapability` 会因 `euid==0` 直接判定有能力，**DSM 6 上
-   TUN 设备开箱可用**，无需 `setcap`；同时本机 API 的 DSM 会话校验（`internal/dsmenv`）不受影响，
-   仍走回环询问 DSM Web API 的同一条路径。
-2. **nginx 注入**：DSM 7 用 `conf/resource` 的 `web-config` worker 把 `spk/nginx/dsm.easytier-pro.conf`
-   链入运行配置；DSM 6 没有该 worker。因此 `spk/scripts/postinst` 在 DSM 主版本 `<7` 时检测
-   `nginx -T` 输出，若没有本套件的路由，则把同一份 conf 拷到 `/usr/syno/share/nginx/conf.d/`
-   并在 `nginx -t` 通过后 reload；`postuninst` 做对称清理（仅删本套件拷入的那个文件）。
-   [待验证] DSM 6.2 的 `nginx.conf` 是否确实 include `/usr/syno/share/nginx/conf.d/*.conf`。
-3. **`preinst` 环境变量**：DSM 7 的 `preinst` 只导出 `SYNOPKG_PKGDEST_VOL`，DSM 6 两个
-   `SYNOPKG_PKGDEST*` 变量都不保证存在。`preinst` 已在两者都缺失时回退到 `/` 做磁盘空间检查，
-   避免误判可用空间为 0 而拒绝安装。
-4. **`conf/resource` / `conf/privilege` 容忍度**：[待验证] DSM 6 的 `synopkg` 对不认识的
-   resource worker（`web-config`）与 `conf/privilege` 是否直接忽略而不报错。若其中任一导致
-   安装失败，则需要在 `scripts/build-spk.sh` 增加 DSM 6 变体（去掉 `conf/resource`），
-   目前按「单包双系统」实现，先以实机验证为准。
-5. **INFO 字段**：`precheckstartstop`、`instuninst_restart_services`、`startstop_restart_services`
-   是 DSM 7 的字段，DSM 6 预期忽略未知 INFO 键。[待验证] 安装时是否有告警。
+1. **os_min_ver 主版本必须匹配**：DSM 7 的安装器要求 `os_min_ver` 的主版本号等于当前 OS，
+   拒绝 `os_min_ver="6.x"`（error 261）。因此 DSM 6 包用 `os_min_ver="6.2-23739"`，
+   DSM 7 包用 `os_min_ver="7.0-40000"`。
+2. **运行身份**：DSM 6 的 `conf/privilege` 需要 `username`/`groupname` 字段才能让
+   `ctrl-script` 覆盖生效（`spk/conf/privilege.dsm6`）。守护进程仍以套件用户运行，
+   但 `postinst`/`postuninst`/`start`/`stop` 以 root 运行（写 nginx 配置、chown var 目录）。
+3. **nginx 注入**：DSM 6 没有 `web-config` worker，`spk/scripts/postinst` 直接把
+   `spk/nginx/dsm.easytier-pro.conf` 拷到 `/usr/syno/share/nginx/conf.d/dsm.easytier-pro.conf`。
+   **文件名必须是 `dsm.*.conf`**，DSM 6 的 nginx 只 include 这个模式。
+4. **var 目录**：DSM 6 不导出 `SYNOPKG_PKGVAR` 给生命周期脚本，改用
+   `/usr/syno/etc/packages/easytier-pro/var`（该目录由 DSM 创建并 chown 给套件用户）。
+5. **TUN**：DSM 6 内核有 `tun.ko` 模块，`insmod` 后 `/dev/net/tun` 可用。
 
-#### DSM 6 实机验证
-
-当前 PVE 集群（N100 / Pentium Gold 8505 / i7-14700KF）无法落地黑群晖 DSM 6：3.10 内核在
-现代 CPU 的 KVM/TCG 下无法完成 initrd init（无论 GRUB 引导还是直接内核引导，均停在
-`mount_block_root` 或 bootconsole 移交），且 jun 1.03b 引导镜像的所有公开镜像源（mega.nz、
-xpenology 论坛、openos、archive.org）均已失效或不可脚本化下载。已验证的事实：DSM 6.2.4-25556
-的内核与 PAT 可正常解包，redpill 引导镜像可在 PVE 上构建，直接内核引导可挂载预装的 rootfs 并
-进入 init 阶段；阻碍在于 initrd/assistant 首次安装流程无法在该硬件上完成。
-
-在具备条件的环境（物理机，或 CPU 较老 / 与 3.10 内核兼容的虚拟化主机）上，按 B 组清单验证
-DSM 6 即可，安装命令与 DSM 7 相同：`synopkg install easytier-pro-x86_64-<version>.spk`。
-重点复核上文标 [待验证] 的 5 项，以及 B12（DSM 6 上 TUN 应开箱可用，无「无 TUN 模式」提示）。
+已验证（VM 142，DS918+，DSM 6.2.4-25556）：安装、启动、状态、UI、API、升级、卸载、TUN 全部通过。
 
 
 ### 虚拟网卡（B12/B13）：已实现的行为
