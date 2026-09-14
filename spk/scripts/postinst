@@ -13,10 +13,6 @@ dsm_major_version() {
 	fi
 }
 
-nginx_has_our_route() {
-	nginx -T 2>/dev/null | grep -q '3rdparty/easytier-pro'
-}
-
 install_nginx_snippet() {
 	[ -f "$NGINX_SNIPPET" ] || return 0
 	mkdir -p "$NGINX_INCLUDE_DIR" || return 1
@@ -31,7 +27,10 @@ install_nginx_snippet() {
 
 case "$(dsm_major_version)" in
 	6*)
-		if ! nginx_has_our_route && ! install_nginx_snippet; then
+		# Always install the current snippet: on upgrade the previous copy
+		# survives (postuninst skips cleanup for UPGRADE), and skipping the
+		# copy because a route already exists would pin the old snippet.
+		if ! install_nginx_snippet; then
 			echo "无法注册 EasyTier Pro 的 nginx 路由，请检查 nginx 配置。" >&2
 			exit 1
 		fi
