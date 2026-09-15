@@ -253,7 +253,7 @@ dist/easytier-pro-<ver>-<x86_64|arm64>.fpk`。优先调用官方 `fnpack build`
 - `scripts/check-fpk.sh`：静态校验。
 - **交付门槛（用户硬性要求）：必须在真实 fnOS 上完成完整新用户 E2E 流程
   后才可交付。** E2E 环境为 PVE VM 143（fnOS，10.147.223.159，admin 账号
-  e2e / E2e-test-2026!，SSH 已开启）。E2E 覆盖：
+  <E2E 管理员账号>，SSH 已开启）。E2E 覆盖：
   1. 手动安装 fpk（应用中心 → 手动安装，或 appcenter-cli install-fpk）。
   2. 桌面图标出现，点击打开 iframe UI，经统一网关正常加载。
   3. 新用户完整流程：device flow 登录 Console → 激活工作区 → 触发

@@ -12,7 +12,7 @@
 
 **移植源状态：** `/data/project/easytier-pro-fnos` 独立仓已完成 Task 1-4（config/console/runtime 移植验证），证明 verbatim 复用可行；monorepo 改造将吸收这些结论但直接在共享代码上做。
 
-**E2E 环境：** PVE VM 143（fnOS，IP 10.147.223.159，admin 账号 e2e / E2e-test-2026!，SSH 已开，正在从 0.8.47 在线升级到 ≥1.1.15）。
+**E2E 环境：** PVE VM 143（fnOS，IP 10.147.223.159，admin 账号 <E2E 管理员账号>，SSH 已开，正在从 0.8.47 在线升级到 ≥1.1.15）。
 
 ## Global Constraints
 
@@ -33,7 +33,7 @@
 
 ---
 
-### Task M2: monorepo 骨架重构（群晖零回归）
+### Task 2: monorepo 骨架重构（群晖零回归）
 
 **Files:**
 - Create: `internal/platform/platform.go`（Platform struct + 注册表）
@@ -253,7 +253,7 @@ git add -A && git commit -m "refactor: extract platform adapter and daemon scaff
 
 ---
 
-### Task M3: UI 平台化拆分
+### Task 3: UI 平台化拆分
 
 **Files:**
 - Modify: `ui/vite.config.ts`（base 由 `VITE_PLATFORM` 决定，输出目录 `dist-<platform>`）
@@ -457,7 +457,7 @@ git add -A && git commit -m "feat(ui): split platform config for dsm and fnos bu
 
 ---
 
-### Task M4: fnOS 平台后端（fnosenv + platform/fnos + cmd/fnos + httpserver 前缀）
+### Task 4: fnOS 平台后端（fnosenv + platform/fnos + cmd/fnos + httpserver 前缀）
 
 **Files:**
 - Create: `internal/config/paths_fnos.go`（`//go:build fnos`，读 TRIM_*）
@@ -641,7 +641,7 @@ git add -A && git commit -m "feat(fnos): add fnOS platform adapter, auth and dae
 
 ---
 
-### Task M5: fpk 打包层 + 构建脚本
+### Task 5: fpk 打包层 + 构建脚本
 
 **Files:**
 - Create: `fpk/manifest`
@@ -930,7 +930,7 @@ git add -A && git commit -m "feat(fpk): add fnOS package manifest, lifecycle scr
 
 ---
 
-### Task M6: CI 双平台
+### Task 6: CI 双平台
 
 **Files:**
 - Modify: `.github/workflows/checks.yml`（加 fnos 编译、fpk 构建+校验、生命周期模拟）
@@ -979,21 +979,21 @@ git add -A && git commit -m "ci: build and check both spk and fpk packages"
 
 ---
 
-### Task M7: fnOS 真机 E2E（交付门槛）
+### Task 7: fnOS 真机 E2E（交付门槛）
 
 **Files:**
 - Create: `docs/e2e-20260916-fnos/README.md`（证据归档）
 - Create: `docs/e2e-20260916-fnos/*.png` / `*.txt`（截图与命令输出）
 
-**环境：** PVE VM 143（fnOS，IP 10.147.223.159，admin 账号 e2e / E2e-test-2026!，SSH 已开，系统版本升级到 ≥1.1.15 后需确认 ≥1.2.0401，若在线升级不足则在 VM 内手动下载新版 ISO 重装或继续在线升级）。
+**环境：** PVE VM 143（fnOS，IP 10.147.223.159，admin 账号 <E2E 管理员账号>，SSH 已开，系统版本升级到 ≥1.1.15 后需确认 ≥1.2.0401，若在线升级不足则在 VM 内手动下载新版 ISO 重装或继续在线升级）。
 
 **前置：** M5 产出的 `dist/easytier-pro-0.1.0-x86_64.fpk`。
 
 - [ ] **Step 1: 确认系统版本**
 
 ```bash
-sshpass -p 'E2e-test-2026!' ssh e2e@10.147.223.159 \
-  'echo E2e-test-2026! | sudo -S cat /usr/trim/BUILD_VERSION'
+sshpass -p '<管理员密码>' ssh e2e@10.147.223.159 \
+  'echo <管理员密码> | sudo -S cat /usr/trim/BUILD_VERSION'
 ```
 
 确认 ≥ 1.2.0401；不足则继续 `liveupdate.update` 或重装。
@@ -1002,8 +1002,8 @@ sshpass -p 'E2e-test-2026!' ssh e2e@10.147.223.159 \
 
 ```bash
 scp dist/easytier-pro-0.1.0-x86_64.fpk e2e@10.147.223.159:/tmp/
-sshpass -p 'E2e-test-2026!' ssh e2e@10.147.223.159 \
-  'echo E2e-test-2026! | sudo -S appcenter-cli install-fpk /tmp/easytier-pro-0.1.0-x86_64.fpk'
+sshpass -p '<管理员密码>' ssh e2e@10.147.223.159 \
+  'echo <管理员密码> | sudo -S appcenter-cli install-fpk /tmp/easytier-pro-0.1.0-x86_64.fpk'
 ```
 
 记录输出；失败则排错（版本、结构、依赖）。
@@ -1049,7 +1049,7 @@ git add docs/e2e-20260916-fnos/ && git commit -m "docs(e2e): record fnOS install
 
 ---
 
-### Task M8: 最终审查与收尾
+### Task 8: 最终审查与收尾
 
 **Files:**
 - Modify: `/data/project/easytier-pro-fnos/README.md`（标注已迁移至 monorepo，指向 synology 仓）
