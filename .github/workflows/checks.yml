@@ -16,8 +16,16 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test ./...
-      - name: Check the interface
-        run: node --test ui/lib/*.test.mjs ui/pages/*.test.mjs
+      - name: Vet (fnos)
+        run: go vet -tags fnos ./...
+      - name: Test (fnos)
+        run: go test -tags fnos ./...
+      - name: Install interface dependencies
+        run: cd ui && npm ci --no-audit --no-fund
+      - name: Typecheck the interface
+        run: cd ui && npm run typecheck
+      - name: Test the interface
+        run: cd ui && npm test
       - name: Check shell scripts
         run: |
           for script in spk/scripts/* scripts/*.sh; do
@@ -27,3 +35,23 @@ jobs:
         run: scripts/build-spk.sh --arch all
       - name: Check packages
         run: scripts/check-spk.sh dist/easytier-pro-*.spk
+      - name: Build fnOS daemon
+        run: CGO_ENABLED=0 go build -tags fnos ./cmd/easytier-pro-fnos
+      - name: Build fnOS UI
+        run: cd ui && npm run build:fnos
+      - name: Build and check fpk
+        run: |
+          scripts/build-fpk.sh --arch all
+          scripts/check-fpk.sh dist/*.fpk
+      - name: Lifecycle simulation
+        run: sh scripts/test-lifecycle.sh
+      - name: Leak check
+        # The Go module keeps its original name, so fnOS code legitimately
+        # references "easytier-pro-dsm" only in module import paths.
+        run: |
+          ! grep -RIn --exclude-dir=.git --exclude-dir=node_modules \
+            -e 'easytier-pro-dsm' -e 'SYNOPKG' -e 'X-Syno' -e '群晖' \
+            internal/fnosenv/ internal/platform/fnos.go \
+            internal/config/paths_fnos.go cmd/easytier-pro-fnos/ \
+            ui/src/platform/fnos.ts ui/dist-fnos/ fpk/ \
+            | grep -v 'github.com/EasyTier-Pro/easytier-pro-dsm'

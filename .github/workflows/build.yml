@@ -26,3 +26,22 @@ jobs:
             dist/easytier-pro-x86_64-*.spk
             dist/easytier-pro-armv8-*.spk
             dist/easytier-pro-armv7-*.spk
+  fpk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build FPK packages
+        run: scripts/build-fpk.sh --arch all
+      - name: Verify FPK packages
+        run: scripts/check-fpk.sh dist/easytier-pro-*.fpk
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: easytier-pro-fpk
+          if-no-files-found: error
+          path: |
+            dist/easytier-pro-x86_64-*.fpk
+            dist/easytier-pro-arm64-*.fpk

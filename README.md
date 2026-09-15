@@ -1,10 +1,14 @@
 # easytier-pro-synology
 
-面向群晖 DSM 的原生 EasyTier Pro 客户端（SPK 套件，不使用 Docker）。
+面向群晖 DSM 与 fnOS 的原生 EasyTier Pro 客户端：一个仓库同时产出群晖 SPK 套件与 fnOS FPK
+应用，两端均不使用 Docker。
 
-它把群晖 NAS 作为一台设备接入 EasyTier Console：登录 Console、取得设备注册密钥、在 NAS 上运行
-`easytier-core`，并在 DSM 主菜单里提供本机管理界面与 Console 网页入口。**套件不包含 Console
+它把 NAS 作为一台设备接入 EasyTier Console：登录 Console、取得设备注册密钥、在 NAS 上运行
+`easytier-core`，并在系统里提供本机管理界面与 Console 网页入口。**套件不包含 Console
 服务端**，也不管理其他设备。
+
+两端共享同一份 Go 守护进程与 Vue 界面源码；平台差异收敛在 `internal/platform/`、
+`internal/{dsmenv,fnosenv}/`、`internal/config/` 的路径根与 `fnos` 构建标签中。
 
 ## 功能
 
@@ -17,24 +21,43 @@
 - 在界面里查看本机节点、Peer 摘要、TUN 设备和脱敏日志，并按 Console 网络列表加入/退出网络。
 - 可一键打开 Console 网页控制台。
 - 支持 `x86_64`、`armv8`、`armv7` 三种 DSM 架构，支持 DSM 6.2 与 DSM 7.x（`os_min_ver="6.2-23739"`）。
+- fnOS 版支持 `x86_64` 与 `arm64`，要求 fnOS ≥ 1.2.0401，以 root 运行，界面经 fnOS 统一网关提供。
 
 ## 安装
+
+### 群晖 DSM
 
 1. 在 `dist/` 中取得与 NAS 架构匹配的 `.spk`（`x86_64`、`armv8`、`armv7`）。
 2. 打开 DSM「套件中心 → 手动安装」，选择该 `.spk`。
 3. 安装后打开 DSM 主菜单中的「EasyTier Pro」。
 
-首次进入页面时按引导登录 Console（或粘贴设备令牌）、选择工作空间与注册密钥；套件会自动下载并
-安装 EasyTier 运行时，随后在概览页选择要加入的网络。
+### fnOS
+
+1. 在 `dist/` 中取得与设备架构匹配的 `.fpk`（`x86_64` 或 `arm64`）。
+2. 打开 fnOS「应用中心 → 手动安装」，上传该 `.fpk`。
+3. 安装后打开桌面的「EasyTier Pro」图标。
+
+首次进入页面时（两端相同）按引导登录 Console（或粘贴设备令牌）、选择工作空间与注册密钥；
+套件会自动下载并安装 EasyTier 运行时，随后在概览页选择要加入的网络。
 
 ### 界面地址
+
+DSM：
 
 - 页面：`/3rdparty/easytier-pro/index.html`（DSM 主菜单入口，套件注入的 nginx 配置提供），
   `/webman/3rdparty/easytier-pro/index.html` 同样可访问。
 - 本机 API：`127.0.0.1:15890`，由 DSM nginx 反向代理到 `/3rdparty/easytier-pro/api/`
   与 `/webman/3rdparty/easytier-pro/api/`，浏览器与 API 同源。
 
+fnOS：
+
+- 页面：桌面图标经统一网关前缀 `/app/easytier-pro` 打开（iframe）。
+- 本机 API：Unix socket `$TRIM_APPDEST/app.sock`，仅经统一网关访问，由网关注入管理员身份。
+
 ## 安全模型
+
+（以下路径与校验细节以群晖端为例；fnOS 端的状态根为 `$TRIM_PKGVAR`，会话校验改为由统一网关
+注入的管理员身份完成。）
 
 - 所有状态位于套件数据目录 `/volume*/@appdata/easytier-pro`，权限 `0700`，
   升级套件不会丢失，卸载时由 `postuninst` 清理。其中 `cache/` 暂存最近一次下载的运行时
@@ -81,9 +104,15 @@
 ## 开发
 
 ```sh
-go vet ./... && go test ./...          # 静态检查与单元测试
-scripts/build-spk.sh --arch all        # 构建三个架构的 SPK（会先构建界面）
-scripts/check-spk.sh dist/*.spk        # 校验 SPK 结构
+go vet ./... && go test ./...                  # 静态检查与单元测试（默认标签，群晖）
+go vet -tags fnos ./... &&
+	go test -tags fnos ./...                   # fnOS 构建标签下的静态检查与单元测试
+scripts/build-spk.sh --arch all                # 构建三个架构的 SPK（会先构建界面）
+scripts/check-spk.sh dist/*.spk                # 校验 SPK 结构
+scripts/build-fpk.sh --arch all                # 构建 FPK（x86_64 与 arm64，会先构建界面）
+scripts/check-fpk.sh dist/*.fpk                # 校验 FPK 结构
+sh scripts/test-lifecycle.sh                   # fnOS 生命周期模拟（安装/启动/停止/卸载，无需真机）
+sh tests/smoke-lifecycle.sh                    # DSM 启停脚本冒烟测试（无需 DSM）
 ```
 
 界面是构建产物，守护进程用 `go:embed` 内嵌 `ui/dist-dsm/`（fnOS 构建内嵌 `ui/dist-fnos/`），
@@ -93,6 +122,7 @@ scripts/check-spk.sh dist/*.spk        # 校验 SPK 结构
 cd ui
 npm ci
 npm test                               # 组件与工具函数测试（vitest）
+npm run typecheck                      # vue-tsc 类型检查（build:dsm / build:fnos 自身不做类型检查）
 npm run dev                            # 本地开发，接口默认指向同源
 npm run build:dsm                      # 产出 ui/dist-dsm/，提交进仓库供 go:embed 使用
 npm run build:fnos                     # 产出 ui/dist-fnos/，同样提交进仓库
@@ -119,8 +149,9 @@ ETP_DEV_ROOT=/tmp/etp ETP_DEV_NO_DSM_AUTH=1 ETP_DEV_LISTEN=0.0.0.0:15890 \
 ```
 
 `ETP_DEV_ROOT` 会把套件目录重定位到 `<root>/target` 与 `<root>/var`，此时
-`ETP_DEV_NO_DSM_AUTH=1` 跳过 DSM 会话校验，`ETP_DEV_LISTEN` 改写监听地址。三者都不会在
-DSM 上生效。
+`ETP_DEV_NO_DSM_AUTH=1` 跳过 DSM 会话校验，`ETP_DEV_LISTEN` 改写监听地址（fnOS 构建下改写
+Unix socket 路径）。fnOS 构建对应 `ETP_DEV_NO_FNOS_AUTH=1`，跳过网关身份校验；
+`sh scripts/test-lifecycle.sh` 走的就是这条路径。这些变量都不会在真实设备上生效。
 
 图标由 Console 的品牌图形生成（一次性提交，不参与构建）：
 
@@ -132,15 +163,34 @@ rsvg-convert -w 64 -h 64 -o spk/icons/PACKAGE_ICON.PNG ../easytier-console/web/p
 rsvg-convert -w 256 -h 256 -o spk/icons/PACKAGE_ICON_256.PNG ../easytier-console/web/public/favicon.svg
 ```
 
+## 端到端验证
+
+- CI（`.github/workflows/checks.yml`）对每个提交做双平台检查：默认与 `fnos` 标签的
+  go vet / go test、界面类型检查与 vitest、Shell 语法检查、SPK 与 FPK 的构建和结构校验、
+  fnOS 生命周期模拟，以及 fnOS 侧源码/产物的防泄露检查。main 分支额外产出两个平台的安装包
+  artifact（`.github/workflows/build.yml`）。
+- DSM 真机验证（全新安装、设备登录、入网、TUN 与重启恢复）的证据归档在 `docs/e2e-20260915/`、
+  `docs/e2e-20260915-fix/` 与 `docs/e2e-20260915-tun/`。
+- fnOS 版的设计文档见 `docs/superpowers/specs/2026-09-16-easytier-pro-fnos-design.md`；
+  fnOS 真机 E2E 的证据将按 monorepo 计划（`docs/superpowers/plans/`）归档在
+  `docs/e2e-20260916-fnos/`。
+
 ## 目录结构
 
 |路径|说明|
 |---|---|
-|`cmd/easytier-pro-dsm`|入口：`supervise`（套件启停）、`serve`（守护进程）、`version`|
-|`internal/config`|包路径、设置、密钥、机器标识、原子写与日志|
+|`cmd/easytier-pro-dsm`|群晖入口：`supervise`（套件启停）、`serve`（守护进程）、`version`|
+|`cmd/easytier-pro-fnos`|fnOS 入口（`fnos` 构建标签），与群晖入口共用 `internal/daemon` 脚手架|
+|`internal/config`|包路径、设置、密钥、机器标识、原子写与日志（路径根按平台拆分在 `paths_dsm.go` / `paths_fnos.go`）|
 |`internal/console`|EasyTier Console 客户端（设备码登录、会话、注册密钥、网络与节点）|
+|`internal/daemon`|supervise/serve 脚手架（两端共享）|
+|`internal/platform`|平台适配：监听器、鉴权器、品牌名（`dsm.go` / `fnos.go` 按构建标签选择）|
 |`internal/runtime`|`easytier-core` 监督、运行时下载与事务化更新、连接切换|
 |`internal/httpserver`|本机 REST API 与静态界面|
 |`internal/dsmenv`|DSM 会话校验|
+|`internal/fnosenv`|fnOS 网关身份校验|
 |`ui/`|管理界面（Vue 3 + TypeScript + Vite；`npm run build:dsm` / `build:fnos` 产物分别提交在 `ui/dist-dsm/` 与 `ui/dist-fnos/`，因为守护进程用 `go:embed` 内嵌它们）|
-|`spk/`|套件元数据、脚本与 nginx 注入配置|
+|`spk/`|群晖套件元数据、脚本与 nginx 注入配置|
+|`fpk/`|fnOS 应用元数据、生命周期脚本与桌面入口|
+|`scripts/`|双平台构建与校验脚本、fnOS 生命周期模拟|
+|`tests/`|DSM 生命周期冒烟测试|
