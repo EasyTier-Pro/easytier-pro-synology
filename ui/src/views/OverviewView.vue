@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { NButton, NCollapse, NCollapseItem, NProgress, NSpace, NSpin } from 'naive-ui'
 import { api } from '@/api/client'
 import { messageOf, needsRelogin } from '@/api/errors'
+import { platform } from '@/platform'
 import { confirmDestructive, notify } from '@/naive'
 import { showOperationProgress } from '@/composables/useOperationProgress'
 import { refreshStatus, shared } from '@/stores/resources'
@@ -58,7 +59,7 @@ const loggedIn = computed(() => Boolean(auth.data.value?.logged_in))
 
 // A read that fails while earlier data is still on screen. The data is kept -
 // it is the last known state and better than an empty page - but the failure has
-// to be visible, and an expired DSM session has to be renewable from here.
+// to be visible, and an expired platform session has to be renewable from here.
 const sessionFailure = computed(() => status.error.value || auth.error.value)
 const origin = window.location.origin
 const current = computed(() => status.data.value)
@@ -469,33 +470,33 @@ onUnmounted(() => {
 			:type="needsRelogin(sessionFailure) ? 'warning' : 'error'"
 		>
 			<p v-if="needsRelogin(sessionFailure)" class="etp-paragraph">
-				本机与 DSM 的登录会话已失效，暂时无法刷新，下面显示的是最后一次读取到的状态。
+				本机与 {{ platform.brandName }} 的登录会话已失效，暂时无法刷新，下面显示的是最后一次读取到的状态。
 			</p>
 			<p v-else class="etp-paragraph">
 				{{ messageOf(sessionFailure) }}。下面显示的是最后一次读取到的状态。
 			</p>
 			<n-space>
-				<n-button type="primary" tag="a" href="/webman/index.cgi" target="_blank">重新登录 DSM</n-button>
+				<n-button type="primary" tag="a" :href="platform.reloginURL" target="_top">重新登录 {{ platform.brandName }}</n-button>
 				<n-button @click="refresh('status', 'auth', 'download')">重试</n-button>
 			</n-space>
 		</StatusBanner>
 
-		<!-- Unavailable: the daemon could not be asked, which is usually the DSM session. -->
+		<!-- Unavailable: the daemon could not be asked, which is usually the platform session. -->
 		<template v-if="screen === 'unavailable'">
 			<SectionCard
 				v-if="needsRelogin(status.error.value)"
-				title="需要有效的 DSM 登录会话"
+				:title="`需要有效的 ${platform.brandName} 登录会话`"
 			>
 				<StatusBanner type="warning">
-					<p class="etp-paragraph">本应用没有拿到有效的 DSM 登录会话，因此无法读取本机状态。</p>
+					<p class="etp-paragraph">本应用没有拿到有效的 {{ platform.brandName }} 登录会话，因此无法读取本机状态。</p>
 					<p class="etp-paragraph">
-						常见原因有两个：DSM 登录其实没有成功；或者登录 DSM 用的地址与本应用的地址不同——DSM
+						常见原因有两个：{{ platform.brandName }} 登录其实没有成功；或者登录 {{ platform.brandName }} 用的地址与本应用的地址不同——{{ platform.brandName }}
 						的会话按地址区分，在别的地址登录不会让本应用生效。
 					</p>
 					<p class="etp-paragraph etp-muted">本应用使用的地址：{{ origin }}</p>
 				</StatusBanner>
 				<n-space>
-					<n-button type="primary" tag="a" href="/webman/index.cgi" target="_blank">重新登录 DSM</n-button>
+					<n-button type="primary" tag="a" :href="platform.reloginURL" target="_top">重新登录 {{ platform.brandName }}</n-button>
 					<n-button @click="refresh('status', 'auth', 'download')">已确认登录，重试</n-button>
 				</n-space>
 			</SectionCard>

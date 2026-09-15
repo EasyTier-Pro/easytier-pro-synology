@@ -1,7 +1,13 @@
+import { platform } from '@/platform'
+
 // Stable error codes the daemon returns, mapped to Chinese text for the cases
 // where it does not send a message of its own. The codes are part of the daemon
-// contract, so this table is the interface's own copy of it.
+// contract, so this table is the interface's own copy of it. The session codes
+// the current platform can produce are filled in from the platform config, so
+// a build never carries the other platform's wording.
 const errorMessages: Record<string, string> = {
+	[platform.authForbiddenCode]: `只有 ${platform.brandName} 管理员可以使用该功能。`,
+	[platform.authRequiredCode]: `请先登录 ${platform.brandName}。`,
 	access_denied: 'Console 拒绝了本次操作。',
 	account_lookup_failed: '已登录，但无法读取账号信息。',
 	connection_change_busy: '已有本机设置变更在进行中。',
@@ -12,8 +18,6 @@ const errorMessages: Record<string, string> = {
 	core_not_installed: '请先安装 EasyTier 运行时。',
 	device_auth_failed: '设备授权失败。',
 	download_busy: '已有更新在进行中。',
-	dsm_auth_forbidden: '只有 DSM 管理员可以使用该功能。',
-	dsm_auth_required: '请先登录 DSM。',
 	enrollment_choice_required: '请选择注册密钥。',
 	enrollment_failed: '无法创建设备注册密钥。',
 	enrollment_key_unavailable: '所选注册密钥已不可用。',
@@ -62,10 +66,10 @@ export class ApiError extends Error {
 	}
 }
 
-/** needsRelogin reports whether the DSM session has to be renewed. */
+/** needsRelogin reports whether the platform session has to be renewed. */
 export function needsRelogin(error: unknown): boolean {
 	return error instanceof ApiError
-		&& (error.code === 'dsm_auth_required' || error.code === 'dsm_auth_forbidden')
+		&& (error.code === platform.authRequiredCode || error.code === platform.authForbiddenCode)
 }
 
 /** messageOf renders any thrown value as text for the interface. */

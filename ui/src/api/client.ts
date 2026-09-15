@@ -1,9 +1,10 @@
 // Local API client. Every request goes to the same origin as this page, so the
-// browser attaches the DSM session cookie automatically. DSM also requires the
-// CSRF token it issues with the login session, which lives in the desktop
-// shell rather than in a cookie, so it has to be read and forwarded by hand.
+// browser attaches the platform session cookie automatically. Whatever extra
+// credentials the platform shell needs (DSM's CSRF token, say) come from the
+// platform configuration.
 
 import { ApiError } from './errors'
+import { platform } from '@/platform'
 import type {
 	AccountPayload,
 	AuthPollPayload,
@@ -21,53 +22,13 @@ import type {
 	Status,
 } from './types'
 
-/**
- * synoToken reads the DSM session token from the surrounding desktop shell.
- *
- * The application window is opened by DSM and shares its origin, so the shell
- * that holds the token is reachable through one of the window references. A
- * page opened directly has no shell and therefore no token; such a request is
- * rejected by DSM, which the interface reports as an expired session.
- */
-export function synoToken(): string {
-	const scopes: Array<Window | null> = [
-		window,
-		window.parent,
-		window.top,
-		window.opener as Window | null,
-	]
-	for (const scope of scopes) {
-		try {
-			const session = (scope as unknown as {
-				SYNO?: { SDS?: { Session?: { getSynoToken?: () => string; SynoToken?: string } } }
-			})?.SYNO?.SDS?.Session
-			if (!session) {
-				continue
-			}
-			const token = typeof session.getSynoToken === 'function'
-				? session.getSynoToken()
-				: session.SynoToken
-			if (token) {
-				return token
-			}
-		} catch {
-			// Cross-origin window: not the DSM shell.
-		}
-	}
-	return ''
-}
-
 interface RequestOptions {
 	method?: string
 	body?: unknown
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-	const headers: Record<string, string> = { 'X-Easytier-Request': '1' }
-	const token = synoToken()
-	if (token) {
-		headers['X-Syno-Token'] = token
-	}
+	const headers: Record<string, string> = { 'X-Easytier-Request': '1', ...platform.extraHeaders() }
 	const init: RequestInit = {
 		method: options.method || 'GET',
 		headers,
@@ -85,7 +46,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 		throw new ApiError('console_unreachable', '无法连接本机 EasyTier Pro 服务。')
 	}
 	if (response.status === 401 || response.status === 403) {
-		throw new ApiError(response.status === 403 ? 'dsm_auth_forbidden' : 'dsm_auth_required')
+		throw new ApiError(response.status === 403 ? platform.authForbiddenCode : platform.authRequiredCode)
 	}
 	let payload: Envelope
 	try {

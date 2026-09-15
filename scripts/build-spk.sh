@@ -73,9 +73,9 @@ build_ui() {
 		else
 			npm install --no-audit --no-fund
 		fi
-		npm run build
+		npm run build:dsm
 	)
-	[ -f "$ROOT/ui/dist/index.html" ] || { echo "the interface build produced no index.html" >&2; exit 1; }
+	[ -f "$ROOT/ui/dist-dsm/index.html" ] || { echo "the interface build produced no index.html" >&2; exit 1; }
 }
 
 build_variant() {
@@ -101,10 +101,10 @@ build_variant() {
 
 	# The built interface: the bundle the daemon and nginx serve. DSM's menu
 	# entry and nginx both address ui/index.html, which the build produces at the
-	# root of dist/.
+	# root of dist-dsm/.
 	# The build output already contains the DSM application icons, which are
 	# taken from the interface's public directory.
-	cp -R "$ROOT/ui/dist/." "$work/package/ui/"
+	cp -R "$ROOT/ui/dist-dsm/." "$work/package/ui/"
 	cp "$ROOT/spk/package/ui/config" "$work/package/ui/config"
 	cp "$ROOT/spk/nginx/dsm.easytier-pro.conf" "$work/package/nginx/dsm.easytier-pro.conf"
 

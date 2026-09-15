@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { NButton, NSelect, NSpace, NSpin } from 'naive-ui'
 import { api } from '@/api/client'
 import { ApiError, messageOf, needsRelogin } from '@/api/errors'
+import { platform } from '@/platform'
 import { notify } from '@/naive'
 import { useResource } from '@/composables/useResource'
 import { shared } from '@/stores/resources'
@@ -143,7 +144,7 @@ onMounted(async () => {
 		</SectionCard>
 
 		<SectionCard v-else-if="blocked === 'relogin'" title="网络">
-			<StatusBanner type="warning">请重新登录 DSM 后再使用本页面。</StatusBanner>
+			<StatusBanner type="warning">请重新登录 {{ platform.brandName }} 后再使用本页面。</StatusBanner>
 		</SectionCard>
 
 		<SectionCard v-else-if="blocked === 'failed'" title="网络" description="选择一个网络以查看其中的节点。本页面为只读，加入或退出网络请在「概览」页面操作。">
@@ -162,14 +163,14 @@ onMounted(async () => {
 			<SectionCard title="网络" description="选择一个网络以查看其中的节点。本页面为只读，加入或退出网络请在「概览」页面操作。">
 				<StatusBanner v-if="networks.error.value" type="warning">
 					<template v-if="needsRelogin(networks.error.value)">
-						DSM 登录会话已失效，暂时无法刷新网络列表，下面是最后一次读取到的内容。
+						{{ platform.brandName }} 登录会话已失效，暂时无法刷新网络列表，下面是最后一次读取到的内容。
 					</template>
 					<template v-else>
 						无法刷新网络列表：{{ messageOf(networks.error.value) }}。下面是最后一次读取到的内容。
 					</template>
 				</StatusBanner>
 				<n-space v-if="networks.error.value">
-					<n-button type="primary" tag="a" href="/webman/index.cgi" target="_blank">重新登录 DSM</n-button>
+					<n-button type="primary" tag="a" :href="platform.reloginURL" target="_top">重新登录 {{ platform.brandName }}</n-button>
 					<n-button @click="networks.reload()">重试</n-button>
 				</n-space>
 				<div class="etp-row">
@@ -188,7 +189,7 @@ onMounted(async () => {
 
 			<SectionCard title="节点">
 				<StatusBanner v-if="nodes.error.value && needsRelogin(nodes.error.value)" type="warning">
-					请重新登录 DSM 后再使用本页面。
+					请重新登录 {{ platform.brandName }} 后再使用本页面。
 				</StatusBanner>
 				<StatusBanner v-else-if="nodes.error.value" type="error">
 					无法读取「{{ selectedNetwork ? networkName(selectedNetwork) : '所选网络' }}」的节点：{{ messageOf(nodes.error.value) }}

@@ -3,12 +3,15 @@ import { computed } from 'vue'
 import { NCode, NCollapse, NCollapseItem, NButton } from 'naive-ui'
 import StatusBanner from './StatusBanner.vue'
 import { copyText } from '@/composables/useClipboard'
+import { platform } from '@/platform'
 import type { Status } from '@/api/types'
 
 /* 缺少 CAP_NET_ADMIN 时本机只能中继运行：给出管理员一次性授权命令。 */
 const props = defineProps<{ status: Status }>()
 
-const visible = computed(() => Boolean(props.status.core_installed && !props.status.tun_capable))
+// Only DSM keeps the package away from root; other platforms grant TUN directly.
+const visible = computed(() =>
+	platform.showTunNotice && Boolean(props.status.core_installed && !props.status.tun_capable))
 
 const runtimeDir = computed(() => props.status.install_dir || '/volume1/@appdata/easytier-pro/runtime')
 

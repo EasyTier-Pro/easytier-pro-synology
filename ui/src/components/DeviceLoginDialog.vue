@@ -3,6 +3,7 @@ import { onUnmounted, ref, watch } from 'vue'
 import { NAlert, NButton, NCode, NModal, NSpace } from 'naive-ui'
 import { api } from '@/api/client'
 import { messageOf, needsRelogin } from '@/api/errors'
+import { platform } from '@/platform'
 import { notify } from '@/naive'
 import { createTimerScope } from '@/utils/timers'
 import type { AuthStartPayload } from '@/api/types'
@@ -57,7 +58,7 @@ function poll(delay: number): void {
 			stopped = true
 			close()
 			if (needsRelogin(error)) {
-				notify('请重新登录 DSM 后再试。', 'error')
+				notify(`请重新登录 ${platform.brandName} 后再试。`, 'error')
 				emit('reloginRequired')
 				return
 			}

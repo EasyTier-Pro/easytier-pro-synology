@@ -1,11 +1,13 @@
 {
-	"name": "easytier-pro-dsm-ui",
+	"name": "easytier-pro-nas-ui",
 	"private": true,
 	"version": "1.0.0",
 	"type": "module",
 	"scripts": {
 		"dev": "vite",
-		"build": "vue-tsc --noEmit && vite build",
+		"build:dsm": "vite build",
+		"build:fnos": "VITE_PLATFORM=fnos vite build",
+		"build": "npm run typecheck && npm run build:dsm",
 		"preview": "vite preview",
 		"test": "vitest run",
 		"test:watch": "vitest",

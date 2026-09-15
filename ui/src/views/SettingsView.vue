@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { NButton, NCheckbox, NForm, NFormItem, NInput, NSpace, NSpin } from 'naive-ui'
 import { api } from '@/api/client'
 import { messageOf, needsRelogin } from '@/api/errors'
+import { platform } from '@/platform'
 import { notify } from '@/naive'
 import { shared } from '@/stores/resources'
 import SectionCard from '@/components/SectionCard.vue'
@@ -111,7 +112,7 @@ async function save(): Promise<void> {
 	} catch (error) {
 		bannerType.value = needsRelogin(error) ? 'warning' : 'error'
 		bannerText.value = needsRelogin(error)
-			? 'DSM 登录已失效，请重新登录 DSM 后再保存设置。'
+			? `${platform.brandName} 登录已失效，请重新登录 ${platform.brandName} 后再保存设置。`
 			: messageOf(error) || '操作失败，请稍后重试。'
 	} finally {
 		saving.value = false
@@ -137,7 +138,7 @@ onMounted(() => {
 		<template v-else>
 			<SectionCard title="日常" description="日常使用只需要保留默认设置。">
 				<n-checkbox v-model:checked="form.enabled">开机自动连接</n-checkbox>
-				<p class="etp-paragraph etp-muted">群晖开机后自动重新接入 EasyTier 虚拟网络。</p>
+				<p class="etp-paragraph etp-muted">{{ platform.brandName }} 开机后自动重新接入 EasyTier 虚拟网络。</p>
 			</SectionCard>
 
 			<SectionCard title="高级" description="除非清楚自己在做什么，否则请保持默认。">
@@ -170,7 +171,7 @@ onMounted(() => {
 					<n-form-item label="运行时安装目录">
 						<span class="etp-mono">{{ installDir }}</span>
 						<template #feedback>
-							<span class="etp-muted">运行时文件的安装目录由 DSM 统一管理，无需手动修改。</span>
+							<span class="etp-muted">运行时文件的安装目录由 {{ platform.brandName }} 统一管理，无需手动修改。</span>
 						</template>
 					</n-form-item>
 				</n-form>
@@ -181,7 +182,7 @@ onMounted(() => {
 					<n-button type="primary" :loading="saving" :disabled="saving" @click="save">保存</n-button>
 				</n-space>
 				<p class="etp-paragraph etp-muted">
-					虚拟网卡对局域网的访问请在 DSM 控制面板 → 安全性 → 防火墙 中放行。
+					虚拟网卡对局域网的访问请在 {{ platform.brandName }} 控制面板 → 安全性 → 防火墙 中放行。
 				</p>
 			</SectionCard>
 		</template>

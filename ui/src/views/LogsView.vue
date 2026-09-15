@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { NButton, NCollapse, NCollapseItem, NSelect, NSpace, NSpin } from 'naive-ui'
 import { api } from '@/api/client'
 import { messageOf, needsRelogin } from '@/api/errors'
+import { platform } from '@/platform'
 import { notify } from '@/naive'
 import { useResource } from '@/composables/useResource'
 import { logLineCount, refreshStatus, shared } from '@/stores/resources'
@@ -58,7 +59,7 @@ const loadError = computed(() => status.error.value || summary.error.value || lo
 
 function reportError(error: unknown): void {
 	if (needsRelogin(error)) {
-		notify('登录状态已失效，请重新登录 DSM 后再试。', 'error')
+		notify(`登录状态已失效，请重新登录 ${platform.brandName} 后再试。`, 'error')
 		return
 	}
 	notify(messageOf(error) || '操作失败，请稍后重试。', 'error')
@@ -117,7 +118,7 @@ onUnmounted(() => {
 <template>
 	<div class="etp-stack">
 		<StatusBanner v-if="loadError" type="error">
-			{{ needsRelogin(loadError) ? '登录状态已失效，请重新登录 DSM 后再试。' : messageOf(loadError) }}
+			{{ needsRelogin(loadError) ? `登录状态已失效，请重新登录 ${platform.brandName} 后再试。` : messageOf(loadError) }}
 		</StatusBanner>
 
 		<SectionCard title="连接状态" description="连接异常时，可先核对下面的状态，再尝试重启连接。" :loading="status.loading.value && status.settled.value">
