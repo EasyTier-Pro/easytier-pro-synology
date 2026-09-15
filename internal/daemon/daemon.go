@@ -139,7 +139,7 @@ func serve(paths config.Paths) error {
 
 	auth := platform.Current.NewAuth(logger)
 	if auth.Bypassed() {
-		logger.Printf("警告：已按开发模式跳过 DSM 登录校验")
+		logger.Printf("警告：已按开发模式跳过 %s 登录校验", platform.Current.DisplayName)
 	}
 	address, listener, err := platform.Current.ListenAddr(paths)
 	if err != nil {
@@ -147,7 +147,8 @@ func serve(paths config.Paths) error {
 	}
 	server := &http.Server{
 		Handler: httpserver.New(manager, client, auth, logger, ui.FS,
-			platform.Current.AuthRequiredCode, platform.Current.AuthForbiddenCode).Handler(),
+			platform.Current.AuthRequiredCode, platform.Current.AuthForbiddenCode,
+			gatewayPrefix()).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		// A session check can run a CGI process per candidate, so bound how
 		// long one connection may occupy a handler.
@@ -171,6 +172,15 @@ func serve(paths config.Paths) error {
 	}
 	logger.Printf("本机 API 已停止")
 	return nil
+}
+
+// gatewayPrefix is the path the fnOS gateway mounts the app under. The DSM
+// reverse proxy strips its own prefix, so no second mount is needed there.
+func gatewayPrefix() string {
+	if platform.Current.Name == "fnos" {
+		return "/app/easytier-pro"
+	}
+	return ""
 }
 
 func writePIDFile(paths config.Paths, logger *config.Logger) {

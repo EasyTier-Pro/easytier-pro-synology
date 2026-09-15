@@ -1,3 +1,5 @@
+//go:build !fnos
+
 package platform
 
 import (

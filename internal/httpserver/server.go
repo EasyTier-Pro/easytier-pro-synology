@@ -43,12 +43,16 @@ type Server struct {
 	static            fs.FS
 	authRequiredCode  string
 	authForbiddenCode string
+	gatewayPrefix     string
 }
 
 // New builds the local API server. requiredCode and forbiddenCode are the
 // apperr codes the platform authenticator returns for a missing session and
 // for a session without administrative rights; they map to 401 and 403.
-func New(manager *runtime.Manager, client *console.Client, auth Authenticator, log *config.Logger, static fs.FS, requiredCode, forbiddenCode string) *Server {
+// gatewayPrefix, when non-empty, mounts the whole handler a second time below
+// that path, because the platform gateway may or may not strip its own prefix
+// before proxying.
+func New(manager *runtime.Manager, client *console.Client, auth Authenticator, log *config.Logger, static fs.FS, requiredCode, forbiddenCode, gatewayPrefix string) *Server {
 	return &Server{
 		manager:           manager,
 		console:           client,
@@ -57,6 +61,7 @@ func New(manager *runtime.Manager, client *console.Client, auth Authenticator, l
 		static:            static,
 		authRequiredCode:  requiredCode,
 		authForbiddenCode: forbiddenCode,
+		gatewayPrefix:     gatewayPrefix,
 	}
 }
 
@@ -89,6 +94,15 @@ func (s *Server) Handler() http.Handler {
 	root := http.NewServeMux()
 	root.Handle("/api/", s.requireSession(api))
 	root.Handle("/", s.staticHandler())
+
+	// The fnOS gateway may or may not strip the gateway prefix before
+	// proxying; accept both forms until verified on real hardware.
+	if s.gatewayPrefix != "" {
+		mux := http.NewServeMux()
+		mux.Handle("/", root)
+		mux.Handle(s.gatewayPrefix+"/", http.StripPrefix(s.gatewayPrefix, root))
+		return mux
+	}
 	return root
 }
 
