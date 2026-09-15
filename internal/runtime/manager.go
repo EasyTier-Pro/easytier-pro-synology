@@ -29,6 +29,9 @@ type Manager struct {
 	store *config.Store
 	cli   *console.Client
 	log   *config.Logger
+	// brand is the platform display name used when the OS has no hostname,
+	// e.g. "Synology NAS".
+	brand string
 
 	// mu serializes runtime mutations: service actions, connection changes,
 	// settings changes and runtime installs.
@@ -67,9 +70,11 @@ type Manager struct {
 }
 
 // NewManager wires a manager to the package roots, state store and Console
-// client.
-func NewManager(paths config.Paths, store *config.Store, cli *console.Client, log *config.Logger) *Manager {
-	manager := &Manager{paths: paths, store: store, cli: cli, log: log}
+// client. brand is the platform display name
+// (platform.Current.DisplayName), injected by the daemon because the
+// platform package sits above this one in the import graph.
+func NewManager(paths config.Paths, store *config.Store, cli *console.Client, log *config.Logger, brand string) *Manager {
+	manager := &Manager{paths: paths, store: store, cli: cli, log: log, brand: brand}
 	manager.dl = newDownloadState(manager)
 	manager.ops = newOperationSet(manager)
 	return manager
@@ -166,7 +171,7 @@ func (m *Manager) coreEnv(settings config.Settings, token string) ([]string, err
 	}
 	hostname, err := os.Hostname()
 	if err != nil || strings.TrimSpace(hostname) == "" {
-		hostname = "Synology NAS"
+		hostname = m.brand
 	}
 	env := append(os.Environ(),
 		"ET_CONFIG_SERVER="+config.NormalizeConfigServer(settings.ConfigServer)+"/"+token,

@@ -25,7 +25,7 @@ func newTestManager(t *testing.T) *Manager {
 	}
 	t.Cleanup(logger.Close)
 	store := config.NewStore(paths)
-	manager := NewManager(paths, store, console.New(store, logger), logger)
+	manager := NewManager(paths, store, console.New(store, logger, "Synology NAS"), logger, "Synology NAS")
 	// The supervisor is not started: stopping a core that never ran is a no-op.
 	manager.core = newCoreSupervisor(manager, context.Background())
 	return manager

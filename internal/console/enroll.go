@@ -237,9 +237,9 @@ func (c *Client) EnrollmentKeySecret(ctx context.Context, workspaceID, keyID str
 func (c *Client) createEnrollmentKey(ctx context.Context, workspaceID, machineID, mode string) (string, *apperr.Error) {
 	hostname, err := os.Hostname()
 	if err != nil || strings.TrimSpace(hostname) == "" {
-		hostname = "Synology NAS"
+		hostname = c.brand
 	}
-	displayName := "Synology NAS"
+	displayName := c.brand
 	if mode == ModeDedicated {
 		suffix := machineID
 		if len(suffix) > 8 {

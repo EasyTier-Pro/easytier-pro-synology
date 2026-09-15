@@ -31,17 +31,24 @@ type Client struct {
 	store *config.Store
 	http  *http.Client
 	log   *config.Logger
+	// brand is the platform display name used in enrollment key names,
+	// e.g. "Synology NAS".
+	brand string
 
 	// mu serializes session refresh and logout, mirroring the file lock the
 	// OpenWrt client uses across processes.
 	mu sync.Mutex
 }
 
-// New returns a Console client bound to the given state store.
-func New(store *config.Store, log *config.Logger) *Client {
+// New returns a Console client bound to the given state store. brand is the
+// platform display name (platform.Current.DisplayName), injected by the
+// daemon because the platform package sits above this one in the import
+// graph.
+func New(store *config.Store, log *config.Logger, brand string) *Client {
 	return &Client{
 		store: store,
 		log:   log,
+		brand: brand,
 		http: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{

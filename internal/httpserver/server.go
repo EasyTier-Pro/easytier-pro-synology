@@ -6,6 +6,7 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"io/fs"
 	"net"
@@ -16,9 +17,15 @@ import (
 	"github.com/EasyTier-Pro/easytier-pro-dsm/internal/apperr"
 	"github.com/EasyTier-Pro/easytier-pro-dsm/internal/config"
 	"github.com/EasyTier-Pro/easytier-pro-dsm/internal/console"
-	"github.com/EasyTier-Pro/easytier-pro-dsm/internal/dsmenv"
 	"github.com/EasyTier-Pro/easytier-pro-dsm/internal/runtime"
 )
+
+// Authenticator validates a request that reached the daemon through the NAS
+// gateway and returns the caller identity or an apperr.Error.
+type Authenticator interface {
+	Authenticate(ctx context.Context, r *http.Request) (string, *apperr.Error)
+	Bypassed() bool
+}
 
 // maxBodyBytes bounds request bodies.
 const maxBodyBytes = 64 << 10
@@ -29,19 +36,31 @@ const requestMarkerHeader = "X-Easytier-Request"
 
 // Server routes the local API and serves the bundled UI.
 type Server struct {
-	manager *runtime.Manager
-	console *console.Client
-	auth    *dsmenv.Authenticator
-	log     *config.Logger
-	static  fs.FS
+	manager           *runtime.Manager
+	console           *console.Client
+	auth              Authenticator
+	log               *config.Logger
+	static            fs.FS
+	authRequiredCode  string
+	authForbiddenCode string
 }
 
-// New builds the local API server.
-func New(manager *runtime.Manager, client *console.Client, auth *dsmenv.Authenticator, log *config.Logger, static fs.FS) *Server {
-	return &Server{manager: manager, console: client, auth: auth, log: log, static: static}
+// New builds the local API server. requiredCode and forbiddenCode are the
+// apperr codes the platform authenticator returns for a missing session and
+// for a session without administrative rights; they map to 401 and 403.
+func New(manager *runtime.Manager, client *console.Client, auth Authenticator, log *config.Logger, static fs.FS, requiredCode, forbiddenCode string) *Server {
+	return &Server{
+		manager:           manager,
+		console:           client,
+		auth:              auth,
+		log:               log,
+		static:            static,
+		authRequiredCode:  requiredCode,
+		authForbiddenCode: forbiddenCode,
+	}
 }
 
-// Handler returns the root handler: DSM-authenticated API plus static UI.
+// Handler returns the root handler: gateway-authenticated API plus static UI.
 func (s *Server) Handler() http.Handler {
 	api := http.NewServeMux()
 	api.HandleFunc("GET /api/status", s.handleStatus)
@@ -68,14 +87,14 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("/api/", s.handleNotFound)
 
 	root := http.NewServeMux()
-	root.Handle("/api/", s.requireDSMSession(api))
+	root.Handle("/api/", s.requireSession(api))
 	root.Handle("/", s.staticHandler())
 	return root
 }
 
-// requireDSMSession rejects requests without an authenticated DSM
-// administrator session.
-func (s *Server) requireDSMSession(next http.Handler) http.Handler {
+// requireSession rejects requests without an authenticated administrator
+// session on the host platform.
+func (s *Server) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if aerr := checkSameOrigin(r); aerr != nil {
 			s.logAuthorizationFailure(r, aerr)
@@ -86,7 +105,7 @@ func (s *Server) requireDSMSession(next http.Handler) http.Handler {
 		if aerr != nil {
 			s.logAuthorizationFailure(r, aerr)
 			status := http.StatusUnauthorized
-			if aerr.Code == apperr.CodeDSMAuthForbidden {
+			if aerr.Code == s.authForbiddenCode {
 				status = http.StatusForbidden
 			}
 			writeErrorStatus(w, status, aerr)

@@ -53,6 +53,8 @@ const (
 	CodeConnectionChangeInterrupted = "connection_change_interrupted"
 	CodeDSMAuthRequired             = "dsm_auth_required"
 	CodeDSMAuthForbidden            = "dsm_auth_forbidden"
+	CodeFnOSAuthRequired            = "fnos_auth_required"
+	CodeFnOSAuthForbidden           = "fnos_auth_forbidden"
 )
 
 var messages = map[string]string{
@@ -103,6 +105,8 @@ var messages = map[string]string{
 	CodeConnectionChangeInterrupted: "上次设置变更被中断，请重试。",
 	CodeDSMAuthRequired:             "请先登录 DSM。",
 	CodeDSMAuthForbidden:            "只有 DSM 管理员可以使用该功能。",
+	CodeFnOSAuthRequired:            "请先登录 fnOS。",
+	CodeFnOSAuthForbidden:           "只有 fnOS 管理员可以使用该功能。",
 }
 
 // Error is an API-level failure.

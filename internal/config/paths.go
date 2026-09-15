@@ -1,49 +1,20 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
-// devRootEnv points the daemon at a throwaway directory tree. It is only set
-// outside DSM (local development and integration testing).
-const devRootEnv = "ETP_DEV_ROOT"
-
-// Paths holds the two Synology package roots the daemon works with.
+// Paths holds the two package roots the daemon works with.
 //
 // PkgDest is replaced on every package upgrade and only holds the shipped
-// files; PkgVar survives upgrades and holds all mutable state.
+// files; PkgVar survives upgrades and holds all mutable state. The platform
+// package (paths_dsm.go / paths_fnos.go) resolves them from the host's
+// package environment.
 type Paths struct {
 	PkgDest string
 	PkgVar  string
-}
-
-// ResolvePaths reads the package roots from the environment. When ETP_DEV_ROOT
-// is set it wins over the DSM variables so the daemon can run on any machine.
-func ResolvePaths() (Paths, error) {
-	pkgDest := os.Getenv("SYNOPKG_PKGDEST")
-	pkgVar := os.Getenv("SYNOPKG_PKGVAR")
-	if devRoot := DevRoot(); devRoot != "" {
-		pkgDest = filepath.Join(devRoot, "target")
-		pkgVar = filepath.Join(devRoot, "var")
-	}
-	if pkgDest == "" || pkgVar == "" {
-		return Paths{}, errors.New("SYNOPKG_PKGDEST and SYNOPKG_PKGVAR must be set")
-	}
-	return Paths{PkgDest: pkgDest, PkgVar: pkgVar}, nil
-}
-
-// DevRoot returns the development root override, if any.
-func DevRoot() string {
-	return strings.TrimSpace(os.Getenv(devRootEnv))
-}
-
-// DevMode reports whether the daemon runs outside DSM.
-func DevMode() bool {
-	return DevRoot() != ""
 }
 
 func (p Paths) RuntimeDir() string    { return filepath.Join(p.PkgVar, "runtime") }

@@ -38,7 +38,7 @@ func newTestClient(t *testing.T, handler http.Handler) (*Client, *config.Store) 
 		t.Fatalf("NewLogger: %v", err)
 	}
 	t.Cleanup(logger.Close)
-	return New(store, logger), store
+	return New(store, logger, "Synology NAS"), store
 }
 
 func writeSession(t *testing.T, store *config.Store, session Session) {
