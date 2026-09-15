@@ -1,0 +1,8 @@
+#!/bin/bash
+# Post-uninstall: drop state unless this is an upgrade.
+set -u
+if [ "${TRIM_APP_STATUS:-}" = "UPGRADE" ]; then
+	exit 0
+fi
+cd "$TRIM_PKGVAR" 2>/dev/null && rm -rf state runtime logs run cache
+exit 0

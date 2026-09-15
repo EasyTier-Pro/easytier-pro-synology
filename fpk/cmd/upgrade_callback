@@ -1,0 +1,4 @@
+#!/bin/bash
+# Post-upgrade: nothing to migrate; the daemon starts through cmd/main start.
+set -u
+exit 0

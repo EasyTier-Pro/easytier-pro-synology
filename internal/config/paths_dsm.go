@@ -8,6 +8,11 @@ import (
 	"path/filepath"
 )
 
+// daemonBinaryName is the file name of the daemon under PkgDest/bin. The
+// supervise loop re-executes this path, so it must match the binary the
+// package build installs for the platform.
+const daemonBinaryName = "easytier-pro-dsm"
+
 // ResolvePaths reads the Synology package roots from the environment. When
 // ETP_DEV_ROOT is set it wins over the DSM variables so the daemon can run on
 // any machine.

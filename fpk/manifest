@@ -1,0 +1,16 @@
+appname=easytier-pro
+version=0.1.0
+display_name=EasyTier Pro
+desc=把本机接入 EasyTier Console 的虚拟网络，提供组网状态、网络管理与日志查看。
+source=thirdparty
+platform=x86
+maintainer=EasyTier Project
+maintainer_url=https://github.com/EasyTier-Pro
+distributor=EasyTier Project
+distributor_url=https://github.com/EasyTier-Pro
+os_min_version=1.2.0401
+ctl_stop=true
+desktop_uidir=ui
+desktop_applaunchname=easytier-pro.main
+changelog=首个 fnOS 版本。
+checksum=

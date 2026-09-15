@@ -1,0 +1,22 @@
+#!/bin/bash
+# Pre-uninstall: stop the daemon like cmd/main stop would, but return instead
+# of exiting so the package manager can keep running the remaining hooks.
+set -u
+
+PIDFILE="$TRIM_PKGVAR/run/daemon.pid"
+
+if [ -f "$PIDFILE" ]; then
+	pid=$(cat "$PIDFILE" 2>/dev/null || true)
+	if [ -n "$pid" ] && [ -d "/proc/$pid" ] && grep -q "easytier-pro-fnos" "/proc/$pid/cmdline" 2>/dev/null; then
+		kill "$pid" 2>/dev/null
+		for _ in $(seq 1 50); do
+			[ -d "/proc/$pid" ] || break
+			sleep 0.2
+		done
+		if [ -d "/proc/$pid" ]; then
+			kill -9 "$pid" 2>/dev/null
+		fi
+	fi
+fi
+rm -f "$PIDFILE"
+exit 0

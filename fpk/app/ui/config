@@ -1,0 +1,14 @@
+{
+	".url": {
+		"easytier-pro.main": {
+			"title": "EasyTier Pro",
+			"desc": "把本机接入 EasyTier Console 的虚拟网络",
+			"icon": "images/icon_{0}.png",
+			"type": "iframe",
+			"gatewayPrefix": "/app/easytier-pro",
+			"gatewaySocket": "app.sock",
+			"url": "/app/easytier-pro/",
+			"allUsers": false
+		}
+	}
+}

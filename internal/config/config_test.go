@@ -208,3 +208,16 @@ func TestNormalizeConsoleURL(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestDaemonBinaryUsesPlatformName(t *testing.T) {
+	paths := testPaths(t)
+	// daemonBinaryForTest lives in paths_{dsm,fnos}_test.go next to the const
+	// it pins, so this fails in either tag's test run when they drift apart.
+	want := daemonBinaryForTest
+	if got := paths.DaemonBinaryName(); got != want {
+		t.Fatalf("DaemonBinaryName = %q, want %q", got, want)
+	}
+	if got := paths.DaemonBinary(); filepath.Base(got) != want {
+		t.Fatalf("DaemonBinary = %q, want base %q", got, want)
+	}
+}

@@ -8,6 +8,11 @@ import (
 	"path/filepath"
 )
 
+// daemonBinaryName is the file name of the daemon under PkgDest/bin. The
+// supervise loop re-executes this path, so it must match the binary the
+// package build installs for the platform.
+const daemonBinaryName = "easytier-pro-fnos"
+
 // ResolvePaths reads the fnOS package env (TRIM_APPDEST / TRIM_PKGVAR),
 // falling back to ETP_DEV_ROOT for development.
 func ResolvePaths() (Paths, error) {

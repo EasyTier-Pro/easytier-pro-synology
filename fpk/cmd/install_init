@@ -1,0 +1,18 @@
+#!/bin/bash
+# Pre-install checks: disk space and the tun device.
+set -u
+
+need_kb=204800
+avail_kb=$(df -k "$TRIM_APPDEST_VOL" 2>/dev/null | awk 'NR==2 {print $4}')
+if [ -n "$avail_kb" ] && [ "$avail_kb" -lt "$need_kb" ]; then
+	echo "磁盘可用空间不足 200MB，无法安装。" >"$TRIM_TEMP_LOGFILE" 2>/dev/null || true
+	exit 1
+fi
+if ! lsmod | grep -q '^tun '; then
+	modprobe tun 2>/dev/null || true
+fi
+if [ ! -c /dev/net/tun ]; then
+	mkdir -p /dev/net
+	mknod /dev/net/tun c 10 200 2>/dev/null || true
+fi
+exit 0

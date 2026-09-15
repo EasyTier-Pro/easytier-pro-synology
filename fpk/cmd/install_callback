@@ -1,0 +1,5 @@
+#!/bin/bash
+# Post-install: create the package var tree.
+set -u
+mkdir -p "$TRIM_PKGVAR"/{state,runtime,logs,run,cache}
+exit 0

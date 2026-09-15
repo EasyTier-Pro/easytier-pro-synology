@@ -49,8 +49,12 @@ func (p Paths) CorePIDFile() string   { return filepath.Join(p.RunDir(), "core.p
 
 func (p Paths) CoreBinary() string   { return filepath.Join(p.RuntimeDir(), "easytier-core") }
 func (p Paths) CLIbinary() string    { return filepath.Join(p.RuntimeDir(), "easytier-cli") }
-func (p Paths) DaemonBinary() string { return filepath.Join(p.PkgDest, "bin", "easytier-pro-dsm") }
-func (p Paths) UIDir() string        { return filepath.Join(p.PkgDest, "ui") }
+func (p Paths) DaemonBinary() string { return filepath.Join(p.PkgDest, "bin", daemonBinaryName) }
+
+// DaemonBinaryName is the platform's daemon file name, used for the version
+// banner and supervise log lines.
+func (p Paths) DaemonBinaryName() string { return daemonBinaryName }
+func (p Paths) UIDir() string            { return filepath.Join(p.PkgDest, "ui") }
 
 // EnsureDirs creates the state tree with owner-only permissions.
 func (p Paths) EnsureDirs() error {

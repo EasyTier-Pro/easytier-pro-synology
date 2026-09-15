@@ -1,0 +1,50 @@
+#!/bin/bash
+# EasyTier Pro fnOS service control: start | stop | status
+set -u
+
+DAEMON="$TRIM_APPDEST/bin/easytier-pro-fnos"
+PIDFILE="$TRIM_PKGVAR/run/daemon.pid"
+
+daemon_pid() {
+	[ -f "$PIDFILE" ] || return 1
+	pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
+	[ -n "$pid" ] && [ -d "/proc/$pid" ] || return 1
+	grep -q "easytier-pro-fnos" "/proc/$pid/cmdline" 2>/dev/null || return 1
+	printf '%s' "$pid"
+}
+
+start_daemon() {
+	mkdir -p "$TRIM_PKGVAR/run" "$TRIM_PKGVAR/logs"
+	if pid=$(daemon_pid); then
+		exit 0
+	fi
+	setsid "$DAEMON" supervise </dev/null >>"$TRIM_PKGVAR/logs/boot.log" 2>&1 &
+	exit 0
+}
+
+stop_daemon() {
+	if ! pid=$(daemon_pid); then
+		rm -f "$PIDFILE"
+		exit 0
+	fi
+	kill "$pid" 2>/dev/null
+	for _ in $(seq 1 50); do
+		[ -d "/proc/$pid" ] || break
+		sleep 0.2
+	done
+	if [ -d "/proc/$pid" ]; then
+		kill -9 "$pid" 2>/dev/null
+	fi
+	rm -f "$PIDFILE"
+	exit 0
+}
+
+case "${1:-}" in
+	start) start_daemon ;;
+	stop) stop_daemon ;;
+	status)
+		if daemon_pid >/dev/null; then exit 0; fi
+		exit 3
+		;;
+	*) echo "usage: $0 {start|stop|status}" >&2; exit 1 ;;
+esac

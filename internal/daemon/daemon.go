@@ -44,7 +44,7 @@ func Run(command string, paths config.Paths, buildVersion string) error {
 	case "serve":
 		return serve(paths)
 	case "version":
-		fmt.Printf("easytier-pro-dsm %s\n", buildVersion)
+		fmt.Printf("%s %s\n", paths.DaemonBinaryName(), buildVersion)
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q (expected supervise, serve or version)", command)
@@ -76,7 +76,7 @@ func supervise(paths config.Paths) error {
 		if err := command.Start(); err != nil {
 			return fmt.Errorf("start %s: %w", paths.DaemonBinary(), err)
 		}
-		logger.Printf("已启动 easytier-pro-dsm serve（PID %d）", command.Process.Pid)
+		logger.Printf("已启动 %s serve（PID %d）", paths.DaemonBinaryName(), command.Process.Pid)
 
 		exited := make(chan error, 1)
 		go func() { exited <- command.Wait() }()
@@ -85,7 +85,7 @@ func supervise(paths config.Paths) error {
 		case <-ctx.Done():
 			stopChild(command, logger)
 			removePIDFile(paths)
-			logger.Printf("已停止 easytier-pro-dsm")
+			logger.Printf("已停止 %s", paths.DaemonBinaryName())
 			return nil
 		case err := <-exited:
 			if ctx.Err() != nil {
