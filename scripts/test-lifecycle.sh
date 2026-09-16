@@ -43,7 +43,16 @@ for _ in $(seq 1 50); do
 	[ -S "$sock" ] && break
 	sleep 0.2
 done
-[ -S "$sock" ] || { echo "daemon socket did not appear at $sock" >&2; exit 1; }
+if [ ! -S "$sock" ]; then
+	echo "daemon socket did not appear at $sock" >&2
+	echo "--- boot.log ---" >&2
+	cat "$DEV/var/logs/boot.log" 2>/dev/null >&2 || echo "(no boot.log)" >&2
+	echo "--- daemon.log ---" >&2
+	cat "$DEV/var/logs/daemon.log" 2>/dev/null >&2 || echo "(no daemon.log)" >&2
+	echo "--- processes ---" >&2
+	ps aux | grep -i easytier | grep -v grep >&2 || echo "(no easytier process)" >&2
+	exit 1
+fi
 
 echo "== status (expect 0)"
 "$DEV/cmd/main" status
