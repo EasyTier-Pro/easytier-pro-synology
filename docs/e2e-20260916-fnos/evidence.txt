@@ -86,3 +86,12 @@ E2E 步骤记录
 [21:33] 卸载清理确认
   uninstall 后 /vol1/@appdata/easytier-pro 下 state/runtime/logs/run/cache
   全部删除（目录为空），appcenter-cli list 为空。重装后全新初始化。
+
+[21:44] 补充验证点
+  网关前缀行为：daemon 日志显示到达的请求路径为 /api/...（无前缀），
+    确认 fnOS 网关在转发时剥离 gatewayPrefix；双挂路由的 StripPrefix 分支
+    为实际生效路径，无前缀分支为兜底（后续版本可收敛，当前保留无害）。
+  版本注入：easytier-pro-fnos version -> "easytier-pro-fnos 0.1.0"
+    （ldflags -X main.buildVersion 正确注入）
+  静态资源：/app/easytier-pro/ 与 /app/easytier-pro/assets/*.js 均 200，
+    vite base /app/easytier-pro/ 生效。
