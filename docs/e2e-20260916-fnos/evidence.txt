@@ -1,0 +1,72 @@
+fnOS E2E 环境
+================
+VM: PVE VM 143 (fnos-e2e)
+fnOS 版本: v1.2.0604 (从 0.8.47 在线升级)
+内核: 6.18.18.c1032-trim
+IP: 10.147.223.159 (Web UI :5666)
+管理员账号: <E2E 管理员账号> (uid 1000, Administrators)
+SSH: 已开启 (appcgi.network.ssh.switch enable=true)
+存储空间: storId 1 (sdb 128G, level 1 btrfs, /vol1)
+
+关键环境准备发现
+================
+1. 全新 fnOS 必须创建存储空间（否则 install-fpk 报 code 20001 = INSTALL_VOLUME_NOT_FOUND）
+2. stor.create API 需要 password 参数（管理员密码二次确认），errno 131072 = E_USER_PASSWD_ERROR
+3. 从 0.8.47 升级到 1.2.x 后用户 shell 被重置为 /usr/sbin/nologin，需重新授权 SSH/调整 shell
+4. appcenter 的 downloadAndInstallVolumeID 默认可能指向不存在的卷，需校正
+
+E2E 步骤记录
+============
+[19:48] install-fpk 成功
+  $ appcenter-cli install-fpk /tmp/easytier-pro-x86_64-0.1.0.fpk
+  [Info]Installation complete.
+
+[19:48] 应用状态 running
+  $ appcenter-cli list -> easytier-pro | EasyTier Pro | 0.1.0 | running
+
+[19:48] daemon 启动（supervise+serve 双进程）
+  $ pgrep -af easytier-pro-fnos
+  20387 .../easytier-pro-fnos supervise
+  20394 .../easytier-pro-fnos serve
+
+[19:48] daemon 日志
+  2026-09-16 19:48:50 info 已启动 easytier-pro-fnos serve（PID 20394）
+  2026-09-16 19:48:50 info EasyTier Pro 已启动，运行目录 /vol1/@appdata/easytier-pro/runtime
+  2026-09-16 19:48:50 info 本机 API 监听 /vol1/@appcenter/easytier-pro/app.sock
+
+[19:49] 统一网关 UI 加载（fnOS session cookie 鉴权）
+  GET /app/easytier-pro/ -> 200 (index.html, vite base /app/easytier-pro/)
+  GET /app/easytier-pro/assets/index-BVCFgeJB.js -> 200
+
+[19:49] API 鉴权语义
+  无 cookie: /app/easytier-pro/api/status -> "invalid token"（网关拦截，未达 daemon）
+  伪造 X-Trim-Isadmin 头: 同样 "invalid token"（网关注入头不可伪造）
+  有效 fnOS session cookie: /app/easytier-pro/api/status -> 200 {"ok":true,...}
+
+[19:50] /api/status 内容
+  machine_id: 84064b8f-... (来自 /etc/machine-id)
+  console_url: https://api.console.easytier.net
+  latest_version: v2.6.4 (release watch 正常)
+  tun_capable/bind_capable: false（core 未安装，coreInstalled=false 时按设计为 false）
+
+[19:50] device flow 发起
+  POST /api/auth/device/start -> {user_code, verification_uri, expires_in:120, interval:5}
+  （授权需 Console 账号在浏览器确认，等待中）
+
+[20:05] 安全修复（最终审查 Major 项）
+  socket 权限 0666 → 0660 + www-data 属组
+  $ ls -la /var/apps/easytier-pro/target/app.sock
+  srw-rw---- 1 root www-data ... app.sock
+  网关转发正常（UI 200、/api/status 200），e2e 用户直连 socket 伪造头被拒
+
+[19:56] 停启验证
+  appcenter-cli stop -> status stopped，daemon 进程退出
+  appcenter-cli start -> status running，supervise+serve 重新拉起
+
+[19:55] 卸载清理
+  appcenter-cli uninstall -> /vol1/@appdata/easytier-pro 下 state/runtime/logs/run/cache 已删除
+  appcenter-cli list 为空
+  重新 install-fpk 成功（幂等）
+
+[device flow 授权]
+  等待用户在浏览器确认设备码（详见对话）

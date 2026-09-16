@@ -28,7 +28,7 @@ jobs:
         run: cd ui && npm test
       - name: Check shell scripts
         run: |
-          for script in spk/scripts/* scripts/*.sh; do
+          for script in spk/scripts/* scripts/*.sh fpk/cmd/*; do
             sh -n "$script"
           done
       - name: Build packages

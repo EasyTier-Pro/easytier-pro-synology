@@ -21,6 +21,10 @@ func main() {
 	if len(os.Args) > 1 {
 		command = os.Args[1]
 	}
+	if command == "version" {
+		fmt.Printf("easytier-pro-dsm %s\n", buildVersion)
+		return
+	}
 	paths, err := config.ResolvePaths()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "easytier-pro-dsm: %v\n", err)

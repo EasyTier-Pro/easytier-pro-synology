@@ -21,14 +21,14 @@ func main() {
 	if len(os.Args) > 1 {
 		command = os.Args[1]
 	}
+	if command == "version" {
+		fmt.Printf("easytier-pro-fnos %s\n", buildVersion)
+		return
+	}
 	paths, err := config.ResolvePaths()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "easytier-pro-fnos: %v\n", err)
 		os.Exit(1)
-	}
-	if command == "version" {
-		fmt.Printf("easytier-pro-fnos %s\n", buildVersion)
-		return
 	}
 	if err := daemon.Run(command, paths, buildVersion); err != nil {
 		fmt.Fprintf(os.Stderr, "easytier-pro-fnos: %v\n", err)
