@@ -95,3 +95,34 @@ E2E 步骤记录
     （ldflags -X main.buildVersion 正确注入）
   静态资源：/app/easytier-pro/ 与 /app/easytier-pro/assets/*.js 均 200，
     vite base /app/easytier-pro/ 生效。
+
+[00:41] device flow 授权成功（Console 账号 <账号>, Workspace <工作空间>, plan pro）
+  POST /api/auth/device/poll -> authenticated:true
+
+[00:42] 工作区激活（auto 模式）
+  POST /api/workspaces/{ws}/activate -> token_present=true,
+  config_server=tcp://et-web.console.easytier.net:22020
+
+[00:43] easytier-core 运行时下载（Gitee 源）
+  POST /api/runtime/download -> download 12% -> restart -> done
+  core_version: easytier-core 2.6.4-8428a89d
+  cli_version:  easytier-cli 2.6.4-8428a89d
+  tun_capable=true bind_capable=true mode_synced=true
+
+[00:44] 加入网络 "Home"（10.144.0.0/16）
+  POST /api/networks/{nid}/join -> operation completed
+  虚拟网卡 tun0 建立，分配 ipv4 10.144.0.4/16，secure_mode 开启
+  ip addr show tun0 -> inet 10.144.0.4/16 scope global
+
+[00:45] 节点状态与组网连通性
+  easytier-cli -p 127.0.0.1:15888 node info -> peer_id 3627518166,
+    public_ip [<公网 IP>, <公网 IPv6>, <公网 IP>]
+  /api/networks/Home/nodes -> 本节点 online；对端节点"家里路由器" 10.144.0.1 online
+  ping 10.144.0.1 -> 3/3 received, 0% loss, rtt 0.75-0.86ms
+
+最终状态 /api/status:
+  running=true, core_installed=true, cli_installed=true, token_present=true,
+  tun_capable=true, bind_capable=true, mode_synced=true, core_update_available=false
+
+新用户全流程闭环：安装 fpk → 打开应用 → device flow 登录 → 激活工作区 →
+下载 easytier-core → 加入网络 → 节点在线 → TUN 组网连通 → 停启恢复 → 卸载清理。
