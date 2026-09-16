@@ -35,13 +35,30 @@ echo "== install_callback"
 
 echo "== start"
 "$DEV/cmd/main" start
-sleep 1
+
+# Wait for the daemon to create its socket; on a slow runner the fixed sleep is
+# not enough and the API probe races the bind.
+sock="$DEV/target/app.sock"
+for _ in $(seq 1 50); do
+	[ -S "$sock" ] && break
+	sleep 0.2
+done
+[ -S "$sock" ] || { echo "daemon socket did not appear at $sock" >&2; exit 1; }
 
 echo "== status (expect 0)"
 "$DEV/cmd/main" status
 
 echo "== API probe"
-curl -sf --unix-socket "$DEV/target/app.sock" http://localhost/api/status | grep -q '"ok":true'
+for _ in $(seq 1 25); do
+	if curl -sf --unix-socket "$sock" http://localhost/api/status | grep -q '"ok":true'; then
+		break
+	fi
+	sleep 0.2
+done
+curl -sf --unix-socket "$sock" http://localhost/api/status | grep -q '"ok":true' || {
+	echo "API probe failed" >&2
+	exit 1
+}
 echo "api answered ok"
 
 echo "== stop"
