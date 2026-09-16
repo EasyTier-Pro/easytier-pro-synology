@@ -70,3 +70,19 @@ E2E 步骤记录
 
 [device flow 授权]
   等待用户在浏览器确认设备码（详见对话）
+
+[21:28] Minor 修复（最终审查）
+  requireSession 401/403 映射单测（dsm+fnos 两对码，5 用例全过）
+  version 子命令不再依赖包环境变量
+  CI 语法检查纳入 fpk/cmd/*
+
+[21:32] 升级机制确认
+  install-fpk 对已安装应用一律返回 "already installed"（不区分版本高低），
+  0.1.0 → 0.1.1 → 0.2.0 → 0.2.1 均未触发升级脚本。
+  结论：fnOS 的升级由应用商店 check-update 通道驱动，install-fpk 仅用于首次
+  手动安装。卸载+重装（0.1.0→0.2.0）验证通过，升级 state 保留逻辑
+  （TRIM_APP_STATUS=UPGRADE 时跳过清理）已由代码审查覆盖。
+
+[21:33] 卸载清理确认
+  uninstall 后 /vol1/@appdata/easytier-pro 下 state/runtime/logs/run/cache
+  全部删除（目录为空），appcenter-cli list 为空。重装后全新初始化。
