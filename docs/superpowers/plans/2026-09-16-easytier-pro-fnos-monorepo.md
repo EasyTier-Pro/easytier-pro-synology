@@ -992,7 +992,7 @@ git add -A && git commit -m "ci: build and check both spk and fpk packages"
 - [ ] **Step 1: 确认系统版本**
 
 ```bash
-sshpass -p '<管理员密码>' ssh e2e@10.147.223.159 \
+sshpass -p '<管理员密码>' ssh <账号>@10.147.223.159 \
   'echo <管理员密码> | sudo -S cat /usr/trim/BUILD_VERSION'
 ```
 
@@ -1002,7 +1002,7 @@ sshpass -p '<管理员密码>' ssh e2e@10.147.223.159 \
 
 ```bash
 scp dist/easytier-pro-0.1.0-x86_64.fpk e2e@10.147.223.159:/tmp/
-sshpass -p '<管理员密码>' ssh e2e@10.147.223.159 \
+sshpass -p '<管理员密码>' ssh <账号>@10.147.223.159 \
   'echo <管理员密码> | sudo -S appcenter-cli install-fpk /tmp/easytier-pro-0.1.0-x86_64.fpk'
 ```
 
