@@ -43,14 +43,15 @@ func listenFnOS(paths config.Paths) (string, net.Listener, error) {
 	// Only the fnOS gateway (nginx worker) may reach the daemon: the API trusts
 	// the gateway-injected identity headers, so the socket must not be
 	// world-accessible or any local process could forge them. Group-ownership
-	// goes to the nginx worker group when it can be found; root:root 0660 is
-	// the fallback and must be fixed up by the package scripts on a host whose
-	// gateway runs under another group.
-	gid, gerr := gatewayGroupID()
-	if gerr == nil {
-		if err := os.Chown(sock, 0, gid); err != nil {
-			ln.Close()
-			return "", nil, fmt.Errorf("chown %s: %w", sock, err)
+	// goes to the nginx worker group when it can be found and we are root (only
+	// root may chown to a foreign group); otherwise the socket keeps the
+	// caller's own group, which on a real fnOS appliance is still a restricted
+	// root group, and in development is simply the developer's group.
+	if os.Geteuid() == 0 {
+		if gid, gerr := gatewayGroupID(); gerr == nil {
+			// A chown failure here is not fatal: the mode below still keeps the
+			// socket private to root and its own group.
+			_ = os.Chown(sock, 0, gid)
 		}
 	}
 	if err := os.Chmod(sock, 0o660); err != nil {
