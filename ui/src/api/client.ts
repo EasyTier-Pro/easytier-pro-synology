@@ -45,17 +45,29 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 	} catch {
 		throw new ApiError('console_unreachable', '无法连接本机 EasyTier Pro 服务。')
 	}
-	if (response.status === 401 || response.status === 403) {
-		throw new ApiError(response.status === 403 ? platform.authForbiddenCode : platform.authRequiredCode)
-	}
-	let payload: Envelope
+	let payload: Envelope | undefined
 	try {
-		payload = await response.json() as Envelope
+		const data: unknown = await response.json()
+		if (data && typeof data === 'object' && !Array.isArray(data)) {
+			payload = data as Envelope
+		}
 	} catch {
-		throw new ApiError('invalid_console_response', '本机服务返回了无效响应。')
+		// A gateway may return HTML or an empty body; use its HTTP status below.
 	}
-	if (payload.ok === false) {
+	if (payload?.ok === false) {
 		throw new ApiError(payload.error || 'unknown_error', payload.message)
+	}
+	if (response.status === 401) {
+		throw new ApiError(platform.authRequiredCode)
+	}
+	if (response.status === 403) {
+		throw new ApiError('request_forbidden')
+	}
+	if (response.status < 200 || response.status >= 300) {
+		throw new ApiError('invalid_console_response', `本机服务请求失败（HTTP ${response.status}）。`)
+	}
+	if (!payload || payload.ok !== true) {
+		throw new ApiError('invalid_console_response', '本机服务返回了无效响应。')
 	}
 	return payload as T
 }

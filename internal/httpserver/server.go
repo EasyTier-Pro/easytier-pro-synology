@@ -9,9 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"io/fs"
-	"net"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/EasyTier-Pro/easytier-pro-dsm/internal/apperr"
@@ -110,7 +108,7 @@ func (s *Server) Handler() http.Handler {
 // session on the host platform.
 func (s *Server) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if aerr := checkSameOrigin(r); aerr != nil {
+		if aerr := checkRequestMarker(r); aerr != nil {
 			s.logAuthorizationFailure(r, aerr)
 			writeErrorStatus(w, http.StatusForbidden, aerr)
 			return
@@ -130,9 +128,11 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 	})
 }
 
-// checkSameOrigin protects state-changing requests from being triggered by
-// another site with the browser's DSM cookie.
-func checkSameOrigin(r *http.Request) *apperr.Error {
+// checkRequestMarker protects state-changing requests from being triggered by
+// another site with the browser's NAS cookie. The custom header requires a
+// CORS preflight, which this API never allows. Do not compare Origin to Host:
+// a reverse proxy may rewrite Host while preserving the browser's Origin.
+func checkRequestMarker(r *http.Request) *apperr.Error {
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return nil
@@ -140,24 +140,7 @@ func checkSameOrigin(r *http.Request) *apperr.Error {
 	if r.Header.Get(requestMarkerHeader) != "1" {
 		return apperr.New(apperr.CodeInvalidRequest)
 	}
-	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" {
-		parsed, err := url.Parse(origin)
-		// nginx forwards "Host $host", which drops the port the browser used,
-		// so only the hosts themselves can be compared.
-		if err != nil || !strings.EqualFold(parsed.Hostname(), hostnameOf(r.Host)) {
-			return apperr.New(apperr.CodeInvalidRequest)
-		}
-	}
 	return nil
-}
-
-// hostnameOf strips an optional port and IPv6 brackets from a Host value, so it
-// compares equal to the hostname url.URL reports for the same address.
-func hostnameOf(host string) string {
-	if name, _, err := net.SplitHostPort(host); err == nil {
-		host = name
-	}
-	return strings.Trim(host, "[]")
 }
 
 // logAuthorizationFailure records why a request was rejected. Cookie values are

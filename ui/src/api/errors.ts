@@ -46,6 +46,7 @@ const errorMessages: Record<string, string> = {
 	node_lookup_failed: '无法读取网络节点。',
 	not_authenticated: '请先登录 EasyTier Console。',
 	release_lookup_failed: '无法读取 EasyTier 稳定版本。',
+	request_forbidden: '请求被拒绝，请检查 NAS 或反向代理的访问设置。',
 	router_not_enrolled: '请先启动 EasyTier Pro 并等待本机注册。',
 	service_not_running: 'EasyTier Pro 未运行。',
 	service_restart_failed: 'EasyTier Pro 重启失败。',

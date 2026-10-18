@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import OverviewView from './OverviewView.vue'
 import { resetShared, shared } from '@/stores/resources'
 import { ApiError } from '@/api/errors'
+import { platform } from '@/platform'
 import type { Status } from '@/api/types'
 
 // The API and the notification surface are the two things this view talks to, so
@@ -209,8 +210,8 @@ describe('overview', () => {
 		const text = wrapper.text()
 		expect(text).toContain('无 TUN 模式')
 		// 关键点：本机仍然在网内，别人能访问它；只有本机主动访问别人受影响。
-		expect(text).toContain('其它节点可以主动访问本机')
-		expect(text).toContain('无法主动访问网络里的其它节点')
+		expect(text.includes('其它节点可以主动访问本机')).toBe(platform.showTunNotice)
+		expect(text.includes('无法主动访问网络里的其它节点')).toBe(platform.showTunNotice)
 	})
 
 	it('unsynced bind capability asks for a Console login', async () => {
@@ -408,21 +409,21 @@ describe('overview region updates', () => {
 	}, 20000)
 
 	// A read that fails after earlier data was shown must say so, otherwise an
-	// expired DSM session cannot be renewed without reloading the browser page.
+	// expired NAS session cannot be renewed without reloading the browser page.
 	it('reports an expired session even while showing the last known state', async () => {
 		const wrapper = await mountView({
 			seed: async (resources) => {
 				// The first read succeeds and is kept...
 				await resources.status.reload()
 				// ...and every read after it fails the way an expired session does.
-				apiMock.status.mockRejectedValue(new ApiError('dsm_auth_required'))
+				apiMock.status.mockRejectedValue(new ApiError(platform.authRequiredCode))
 			},
 		})
 
 		// The old data is still there and the failure is stated with a way out.
 		expect(wrapper.text()).toContain('连接状态')
-		expect(wrapper.text()).toContain('DSM 的登录会话已失效')
-		expect(wrapper.text()).toContain('重新登录 DSM')
+		expect(wrapper.text()).toContain(`${platform.brandName} 的登录会话已失效`)
+		expect(wrapper.text()).toContain(`重新登录 ${platform.brandName}`)
 	})
 
 	// A machine can be joined to a network the catalogue does not list. The

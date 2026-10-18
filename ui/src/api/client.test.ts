@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api, consoleWebURL } from './client'
+import { platform } from '@/platform'
 
 // These go through the real request path against a stubbed fetch, so the shapes
 // asserted here are the ones the daemon actually sends. A double that returned
@@ -62,7 +63,33 @@ describe('api client', () => {
 
 	it('turns an expired session into the code the relogin path looks for', async () => {
 		vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ status: 401 } as Response)))
-		await expect(api.status()).rejects.toMatchObject({ code: 'dsm_auth_required' })
+		await expect(api.status()).rejects.toMatchObject({ code: platform.authRequiredCode })
+	})
+
+	it.each([
+		[ 403, 'invalid_request', '请求无效。' ],
+		[ 403, platform.authForbiddenCode, '只有管理员可以使用该功能。' ],
+		[ 401, platform.authRequiredCode, '请先登录 NAS。' ],
+	])('preserves the daemon error on HTTP %s (%s)', async (status, code, message) => {
+		vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+			ok: false, error: code, message,
+		}), { status })))
+		await expect(api.authStart()).rejects.toMatchObject({ code, message })
+	})
+
+	it('does not infer administrator privileges from a gateway 403', async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>Forbidden</html>', { status: 403 })))
+		await expect(api.authStart()).rejects.toMatchObject({ code: 'request_forbidden' })
+	})
+
+	it('rejects an HTTP failure even with a successful-looking body', async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => new Response('{"ok":true}', { status: 502 })))
+		await expect(api.status()).rejects.toMatchObject({ code: 'invalid_console_response' })
+	})
+
+	it.each([ 'null', '[]', '"invalid token"', '{}', '<html>gateway</html>' ])('rejects an invalid response: %s', async (body) => {
+		vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
+		await expect(api.status()).rejects.toMatchObject({ code: 'invalid_console_response' })
 	})
 
 	it('reports the daemon error code and message', async () => {
